@@ -1,0 +1,10 @@
+[out:json][timeout:120];
+(
+ way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|motorway_link|trunk_link|primary_link|secondary_link)$"](55.885,-3.42,55.995,-3.07);
+ way["natural"="water"](55.885,-3.42,55.995,-3.07);
+ way["waterway"="river"](55.885,-3.42,55.995,-3.07);
+ way["leisure"="park"](55.885,-3.42,55.995,-3.07);
+ relation["leisure"="park"](55.885,-3.42,55.995,-3.07);
+ way["natural"="coastline"](55.87,-3.45,56.01,-3.03);
+);
+out geom qt;

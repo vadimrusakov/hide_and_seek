@@ -1,0 +1,20 @@
+[out:json][timeout:170];
+(
+ nwr["tourism"="museum"](55.80,-3.62,56.06,-2.90);
+ nwr["amenity"="library"](55.80,-3.62,56.06,-2.90);
+ nwr["amenity"="cinema"](55.80,-3.62,56.06,-2.90);
+ nwr["amenity"="hospital"](55.80,-3.62,56.06,-2.90);
+ nwr["leisure"="golf_course"](55.80,-3.62,56.06,-2.90);
+ nwr["leisure"="stadium"](55.80,-3.62,56.06,-2.90);
+ node["natural"="peak"](55.80,-3.62,56.06,-2.90);
+ node["natural"="hill"](55.80,-3.62,56.06,-2.90);
+ nwr["railway"="station"](55.80,-3.62,56.06,-2.90);
+ nwr["railway"="tram_stop"](55.80,-3.62,56.06,-2.90);
+ nwr["office"="diplomatic"](55.80,-3.62,56.06,-2.90);
+ nwr["amenity"="university"](55.80,-3.62,56.06,-2.90);
+ nwr["tourism"="zoo"](55.80,-3.62,56.06,-2.90);
+ nwr["tourism"="aquarium"](55.80,-3.62,56.06,-2.90);
+ nwr["amenity"="theatre"](55.80,-3.62,56.06,-2.90);
+ nwr["historic"="castle"](55.80,-3.62,56.06,-2.90);
+);
+out center tags qt;

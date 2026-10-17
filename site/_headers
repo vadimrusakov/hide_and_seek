@@ -1,0 +1,3 @@
+# Netlify: always check for a newer version, so phones never run a stale copy of the app
+/*
+  Cache-Control: no-cache

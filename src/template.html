@@ -1,0 +1,329 @@
+<title>Edinburgh Hiding Zone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/*LEAFLET_CSS*/
+</style>
+<style>
+/* Layout: one-screen field map; control panel docked left on desktop, stacked under the map on phones */
+:root{
+  --paper:#f3f1ec; --land:#ecebe5; --ink:#1d2026; --muted:#5d6370; --line:#d6d3cb;
+  --road:#ffffff; --road-major:#c9c3b6; --road-edge:#d9d5cc; --park:#d5e2c8; --water:#b9d0de;
+  --outside:#cfccc4; --panel:#fbfaf7;
+  --madder:#7d1e2c;                /* Lothian livery accent */
+  --excl:#c8322b; --excl-fill:rgba(200,50,43,.42);
+  --caut:#c98a12; --caut-fill:rgba(225,160,30,.28);
+  --busy:#3c62a8; --busy-fill:rgba(60,98,168,.10);
+  --hl:#111;
+  --f-display:"Big Shoulders Display","Arial Narrow",sans-serif;
+  --f-body:"Public Sans",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#16181c; --land:#22252b; --ink:#e9e7e2; --muted:#a2a7b2; --line:#363a42;
+  --road:#3a3e46; --road-major:#5a5e66; --road-edge:#2c3037; --park:#26362a; --water:#1d3442;
+  --outside:#121316; --panel:#1b1d22; --madder:#e2808c;
+  --excl:#ff6a5c; --excl-fill:rgba(255,90,75,.40); --caut:#f0b440; --caut-fill:rgba(240,180,64,.24);
+  --busy:#86a6e6; --busy-fill:rgba(134,166,230,.12); --hl:#fff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#16181c; --land:#22252b; --ink:#e9e7e2; --muted:#a2a7b2; --line:#363a42;
+  --road:#3a3e46; --road-major:#5a5e66; --road-edge:#2c3037; --park:#26362a; --water:#1d3442;
+  --outside:#121316; --panel:#1b1d22; --madder:#e2808c;
+  --excl:#ff6a5c; --excl-fill:rgba(255,90,75,.40); --caut:#f0b440; --caut-fill:rgba(240,180,64,.24);
+  --busy:#86a6e6; --busy-fill:rgba(134,166,230,.12); --hl:#fff; color-scheme:dark}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45}
+.app{height:100%;display:grid;grid-template-columns:minmax(300px,360px) 1fr}
+#map{height:100%;background:var(--outside);min-width:0}
+.panel{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding-block:20px;padding-inline:20px;display:flex;flex-direction:column;gap:18px;min-width:0}
+h1{font-family:var(--f-display);font-weight:800;font-size:34px;line-height:.95;letter-spacing:.01em;text-transform:uppercase;margin:0;text-wrap:balance}
+h1 span{color:var(--madder)}
+.sub{color:var(--muted);margin:6px 0 0;font-size:13px}
+h2{font-family:var(--f-display);font-weight:600;font-size:15px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px;color:var(--muted)}
+.legend{display:grid;gap:8px}
+.lg{display:grid;grid-template-columns:auto 22px 1fr auto;gap:10px;align-items:start}
+.sw{width:22px;height:16px;border-radius:2px;margin-top:2px;border:2px solid}
+.sw.excl{border-color:var(--excl);background:var(--excl-fill)}
+.sw.caut{border-color:var(--caut);background:var(--caut-fill)}
+.sw.busy{border-color:var(--busy);border-style:dashed;background:var(--busy-fill)}
+.sw.flag{border:0;height:4px;margin-top:8px;background:repeating-linear-gradient(90deg,var(--hl) 0 6px,transparent 6px 9px)}
+.lg b{font-weight:600}
+.lg small{display:block;color:var(--muted);font-size:12.5px}
+.lg label{display:contents;cursor:pointer}
+.lg input{margin:2px 0 0;accent-color:var(--madder)}
+.km{font-family:var(--f-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.search{position:relative}
+.search input{width:100%;box-sizing:border-box;font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink)}
+.search input:focus{outline:2px solid var(--madder);outline-offset:1px}
+.res{margin-top:10px;font-size:13px;display:grid;gap:6px}
+.bar{display:flex;height:8px;border-radius:2px;overflow:hidden;background:var(--line)}
+.bar i{display:block;height:100%}
+.verdict{font-weight:600}
+.verdict.exclude{color:var(--excl)} .verdict.caution{color:var(--caut)} .verdict.ok{color:var(--ink)} .verdict.busy{color:var(--busy)}
+.zlist{color:var(--muted);font-size:12.5px}
+.note{font-size:12.5px;color:var(--muted);display:grid;gap:8px}
+.note p{margin:0}
+.note a{color:var(--madder)}
+.stat{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.leaflet-container{background:var(--outside);font-family:var(--f-body)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink);border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.leaflet-popup-content{margin:12px 14px;font-size:13px;line-height:1.45}
+.pop h3{font-family:var(--f-display);font-weight:800;font-size:19px;margin:0 0 2px;text-transform:uppercase;letter-spacing:.01em}
+.pop .tag{display:inline-block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;padding:1px 6px;border-radius:2px;margin-bottom:6px;color:#fff}
+.tag.exclude{background:var(--excl)} .tag.caution{background:var(--caut);color:#1d2026} .tag.busy{background:var(--busy)} .tag.ok{background:var(--muted)}
+.pop dl{display:grid;grid-template-columns:auto auto;gap:2px 12px;margin:6px 0 0;font-variant-numeric:tabular-nums}
+.pop dt{color:var(--muted)} .pop dd{margin:0;font-family:var(--f-mono);font-size:12px;text-align:right}
+.lbl{font-family:var(--f-display);font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;text-shadow:0 0 3px var(--land),0 0 3px var(--land);pointer-events:none}
+.leaflet-control-zoom a{background:var(--panel)!important;color:var(--ink)!important;border-color:var(--line)!important}
+.leaflet-control-attribution{background:color-mix(in srgb,var(--panel) 85%,transparent)!important;color:var(--muted)!important}
+.leaflet-control-attribution a{color:var(--muted)!important}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr;grid-template-rows:auto auto;height:auto}
+  #map{height:72vh;order:-1}
+  .panel{border-right:0;border-top:1px solid var(--line);padding-inline:16px}
+  h1{font-size:28px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.loc-btn{width:34px;height:34px;display:grid;place-items:center;background:var(--panel);color:var(--ink);border:2px solid rgba(0,0,0,.2);border-radius:4px;cursor:pointer;padding:0}
+.loc-btn svg{width:20px;height:20px}
+.loc-btn:focus-visible{outline:2px solid var(--madder);outline-offset:2px}
+.loc-btn.on{background:var(--madder);color:#fff;border-color:var(--madder)}
+.loc-btn.wait svg{animation:spin 1.2s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.me{width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#2a7de1;border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3),0 1px 4px rgba(0,0,0,.4);position:relative}
+.me::after{content:"";position:absolute;inset:-9px;border-radius:50%;border:2px solid #2a7de1;opacity:0;animation:ping 2s ease-out infinite}
+@keyframes ping{0%{transform:scale(.5);opacity:.8}100%{transform:scale(1.6);opacity:0}}
+.chip{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:1000;max-width:calc(100% - 32px);box-sizing:border-box;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-left:6px solid var(--muted);border-radius:4px;padding:8px 12px;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,.25);display:grid;gap:1px}
+.chip b{font-family:var(--f-display);font-size:17px;text-transform:uppercase;letter-spacing:.02em}
+.chip small{color:var(--muted);font-family:var(--f-mono);font-size:11.5px;font-variant-numeric:tabular-nums}
+.chip.exclude{border-left-color:var(--excl)} .chip.caution{border-left-color:var(--caut)} .chip.busy{border-left-color:var(--busy)} .chip.ok{border-left-color:#3d9a5b} .chip.err{border-left-color:var(--excl)}
+#map{position:relative}
+@media (prefers-reduced-motion:reduce){.me::after,.loc-btn.wait svg{animation:none}}
+
+</style>
+
+<div class="app">
+  <aside class="panel">
+    <div>
+      <h1>Edinburgh <span>Hiding</span> Zone</h1>
+      <p class="sub">City of Edinburgh only · play 08:00–18:00 · zones are SIMD 2020 data zones (≈500–1,000 residents each)</p>
+    </div>
+
+    <section>
+      <h2>Map key</h2>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <section class="search">
+      <h2>Check a street</h2>
+      <input id="q" type="search" list="streets" placeholder="e.g. Pennywell Road" autocomplete="off" aria-label="Street name">
+      <datalist id="streets"></datalist>
+      <div class="res" id="res"></div>
+    </section>
+
+    <section class="note">
+      <h2>How zones were picked</h2>
+      <p><b>No hiding</b>: crime in Scotland's worst 10% of data zones <em>and</em> overall deprivation in the worst 20%.</p>
+      <p><b>Public spots only</b>: crime in the worst 20% and deprivation in the worst 30%, or crime in the worst 10% outside the centre.</p>
+      <p><b>Busy</b>: worst-10% crime in the centre, business parks and the airport. Rates are per resident, so visitors inflate them. That's mostly theft, so these stay fully playable.</p>
+      <p id="statline"></p>
+      <p>Crime figures are 2017–18 recorded crime (violence, sexual offences, housebreaking, vandalism, drugs, common assault). Treat old patterns as a guide, not a guarantee.</p>
+      <p>Sources: <a href="https://simd.scot" target="_blank" rel="noopener">SIMD 2020, Scottish Government</a> · streets <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · Pennywell flag: <a id="flagsrc" target="_blank" rel="noopener">Midlothian Advertiser</a></p>
+    </section>
+  </aside>
+  <div id="map" role="application" aria-label="Map of Edinburgh hiding zones"><div class="chip" id="chip" hidden aria-live="polite"></div></div>
+</div>
+
+<script>/*DATA*/</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+(function(){
+const D = window.MAPDATA;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dec = a => { const o=[]; let x=0,y=0; for(let i=0;i<a.length;i+=2){x+=a[i];y+=a[i+1];o.push([y/1e5,x/1e5]);} return o; };
+const decPoly = p => p.map(dec);
+
+const TIERS = {
+  exclude:{label:'No hiding', desc:'Ride through, but don’t hide or wait here.'},
+  caution:{label:'Public spots only', desc:'Hide only in shops, stations, parks with people.'},
+  busy:{label:'Busy centre', desc:'Playable. High theft rate; watch your kit.'},
+  ok:{label:'Playable', desc:''}
+};
+
+const map = L.map('map',{preferCanvas:true, zoomSnap:.5, minZoom:10.5, maxZoom:18, attributionControl:true})
+  .fitBounds([[55.89,-3.33],[55.99,-3.08]]);
+map.attributionControl.setPrefix(false).addAttribution('© OpenStreetMap contributors · SIMD 2020');
+const R = L.canvas({padding:.3});
+
+let layers = {};
+function build(){
+  Object.values(layers).forEach(l=>map.removeLayer(l)); layers={};
+  // land = city boundary
+  layers.land = L.polygon(D.boundary.map(decPoly).flat(), {renderer:R, stroke:true, color:css('--muted'), weight:1.5, dashArray:'6 4', fillColor:css('--land'), fillOpacity:1, interactive:false}).addTo(map);
+  layers.parks = L.polygon(D.parks.map(decPoly), {renderer:R, stroke:false, fillColor:css('--park'), fillOpacity:1, interactive:false}).addTo(map);
+  layers.water = L.polygon(D.water.map(decPoly), {renderer:R, stroke:false, fillColor:css('--water'), fillOpacity:1, interactive:false}).addTo(map);
+  layers.rivers = L.polyline(D.rivers.map(dec), {renderer:R, color:css('--water'), weight:3, interactive:false}).addTo(map);
+  layers.coast = L.polyline(D.coast.map(dec), {renderer:R, color:css('--water'), weight:2.5, interactive:false}).addTo(map);
+  const byCls=[[],[],[],[],[]];
+  D.roads.forEach(r=>byCls[r[0]].push(dec(r[2])));
+  layers.r3 = L.polyline(byCls[3].concat(byCls[4]), {renderer:R, color:css('--road'), weight:1.6, interactive:false});
+  layers.r2 = L.polyline(byCls[2], {renderer:R, color:css('--road'), weight:2.4, interactive:false}).addTo(map);
+  layers.r1 = L.polyline(byCls[1], {renderer:R, color:css('--road-major'), weight:3, interactive:false}).addTo(map);
+  layers.r0 = L.polyline(byCls[0], {renderer:R, color:css('--road-major'), weight:4, interactive:false}).addTo(map);
+  // zones
+  const st = {
+    exclude:{color:css('--excl'), weight:1.6, fillColor:css('--excl-fill'), fillOpacity:1},
+    caution:{color:css('--caut'), weight:1.4, fillColor:css('--caut-fill'), fillOpacity:1},
+    busy:{color:css('--busy'), weight:1.2, dashArray:'5 4', fillColor:css('--busy-fill'), fillOpacity:1},
+    ok:{color:'transparent', weight:0, fillOpacity:0}
+  };
+  ['ok','busy','caution','exclude'].forEach(t=>{
+    const g = L.featureGroup();
+    D.zones.forEach((z,i)=>{ if(z.t!==t) return;
+      const p = L.polygon(z.g.map(decPoly), Object.assign({renderer:R}, st[t]));
+      p.bindPopup(()=>popup(z), {maxWidth:280}); p.addTo(g); });
+    layers['z_'+t]=g; if(visible[t]!==false) g.addTo(map);
+  });
+  // flagged streets
+  const fl = L.featureGroup();
+  D.flags.forEach(f=>{ f.names.forEach(n=>{ const idx=D.names.indexOf(n);
+    D.roads.forEach(r=>{ if(r[1]===idx) L.polyline(dec(r[2]),{renderer:R,color:css('--hl'),weight:4,dashArray:'7 4'}).bindPopup(`<div class="pop"><span class="tag exclude">Flagged street</span><h3>${n}</h3>${f.note}</div>`).addTo(fl); }); }); });
+  layers.flags = fl; if(visible.flags!==false) fl.addTo(map);
+  layers.labels = L.layerGroup(D.labels.filter(l=>l[3]>0.4).map(l=>L.marker([l[2],l[1]],{icon:L.divIcon({className:'lbl',html:l[0],iconSize:null}),interactive:false})));
+  zoomRules(); if(hl) highlight(hlName,false);
+  if(typeof meCircle!=='undefined' && meCircle){ map.removeLayer(meCircle); meCircle.addTo(map); }
+}
+const visible = {};
+function zoomRules(){
+  const z = map.getZoom();
+  if(z>=13.5) layers.r3.addTo(map), layers.r3.bringToBack(), layers.parks.bringToBack(), layers.water.bringToBack(), layers.land.bringToBack(); else map.removeLayer(layers.r3);
+  if(z>=14) layers.labels.addTo(map); else map.removeLayer(layers.labels);
+}
+map.on('zoomend', zoomRules);
+
+function fmt(n){return n==null?'suppressed (low count)':n.toLocaleString('en-GB');}
+function popup(z){
+  const t = TIERS[z.t];
+  return `<div class="pop"><span class="tag ${z.t}">${t.label}</span><h3>${z.n}</h3>${t.desc?`<div>${t.desc}</div>`:''}
+  <dl><dt>Crime rank (1 = worst of 6,976)</dt><dd>${z.cr}</dd>
+  <dt>Crimes per 10,000 residents</dt><dd>${fmt(z.rate)}</dd>
+  <dt>Deprivation decile (1 = worst)</dt><dd>${z.sd}</dd>
+  <dt>Residents (2017)</dt><dd>${z.pop.toLocaleString('en-GB')}</dd>
+  <dt>Data zone</dt><dd>${z.code}</dd></dl></div>`;
+}
+
+// legend
+const S = D.stats, km = S.by_tier_km2;
+const leg = document.getElementById('legend');
+[['exclude','excl'],['caution','caut'],['busy','busy']].forEach(([t,c])=>{
+  leg.insertAdjacentHTML('beforeend',`<div class="lg"><label><input type="checkbox" id="tg-${t}" checked><span><span class="sw ${c}" style="display:block"></span></span><span><b>${TIERS[t].label}</b><small>${TIERS[t].desc}</small></span></label><span class="km">${(km[t]||0).toFixed(1)} km²</span></div>`);
+});
+leg.insertAdjacentHTML('beforeend',`<div class="lg"><label><input type="checkbox" id="tg-flags" checked><span><span class="sw flag" style="display:block"></span></span><span><b>Flagged street</b><small>Named in local news reports.</small></span></label><span class="km">${D.flags.reduce((a,f)=>a+f.names.length,0)} st.</span></div>`);
+leg.addEventListener('change',e=>{ const t=e.target.id.slice(3); visible[t]=e.target.checked;
+  const l = t==='flags'?layers.flags:layers['z_'+t]; e.target.checked?l.addTo(map):map.removeLayer(l); });
+document.getElementById('statline').innerHTML = `Of the city's <span class="stat">${S.total_km2} km²</span>, <span class="stat">${km.exclude.toFixed(1)} km²</span> (${(100*km.exclude/S.total_km2).toFixed(1)}%) is no-hiding and <span class="stat">${km.caution.toFixed(1)} km²</span> (${(100*km.caution/S.total_km2).toFixed(1)}%) is public-spots-only.`;
+document.getElementById('flagsrc').href = D.flags[0].src;
+
+// street search
+const dl = document.getElementById('streets');
+const sIdx = new Map(D.streets.map(s=>[D.names[s[0]], s]));
+dl.innerHTML = [...sIdx.keys()].sort().map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+let hl=null, hlName=null;
+function highlight(name, fit=true){
+  if(hl) map.removeLayer(hl); hl=null; hlName=name;
+  const idx = D.names.indexOf(name); if(idx<0) return;
+  const lines = D.roads.filter(r=>r[1]===idx).map(r=>dec(r[2]));
+  if(!lines.length) return;
+  hl = L.featureGroup([L.polyline(lines,{renderer:R,color:css('--paper'),weight:9,opacity:.9,interactive:false}), L.polyline(lines,{renderer:R,color:css('--madder'),weight:5,interactive:false})]).addTo(map);
+  if(fit) map.flyToBounds(hl.getBounds(),{maxZoom:16,padding:[40,40],duration:.6});
+}
+const RANK=['exclude','caution','busy','ok'];
+function check(){
+  const name = document.getElementById('q').value.trim(); const out = document.getElementById('res');
+  const s = sIdx.get(name);
+  if(!s){ out.innerHTML = name? '<span class="zlist">Pick a street from the list.</span>':''; return; }
+  const parts = s[1]; const tot = Object.values(parts).reduce((a,b)=>a+b,0);
+  const worst = RANK.find(t=>parts[t]>0) || 'ok';
+  const verdict = {exclude:'Partly or fully in a no-hiding zone', caution:'Public spots only on part of it', busy:'Playable (busy centre)', ok:'Fully playable'}[worst];
+  const col = {exclude:'--excl',caution:'--caut',busy:'--busy',ok:'--muted'};
+  const bar = RANK.filter(t=>parts[t]).map(t=>`<i style="width:${100*parts[t]/tot}%;background:var(${col[t]})" title="${TIERS[t].label}: ${parts[t]} m"></i>`).join('');
+  const detail = RANK.filter(t=>parts[t]).map(t=>`${TIERS[t].label} ${parts[t].toLocaleString('en-GB')} m`).join(' · ');
+  const zn = [...new Set(s[2].filter(i=>D.zones[i].t==='exclude'||D.zones[i].t==='caution').map(i=>D.zones[i].n))];
+  const flagged = D.flags.some(f=>f.names.includes(name));
+  out.innerHTML = `<div class="verdict ${worst}">${flagged?'Flagged street. ':''}${verdict}</div><div class="bar">${bar}</div><div class="zlist">${detail}${zn.length?'<br>Zones: '+zn.join(', '):''}</div>`;
+  highlight(name);
+}
+document.getElementById('q').addEventListener('change', check);
+document.getElementById('q').addEventListener('keydown', e=>{ if(e.key==='Enter') check(); });
+
+
+// ---------- live location
+const ZR = D.zones.map(z=>z.g.map(decPoly));            // [poly][ring][[lat,lng]]
+const BR = D.boundary.map(decPoly);
+function inRing(lat,lng,r){ let c=false; for(let i=0,j=r.length-1;i<r.length;j=i++){ const a=r[i],b=r[j];
+  if(((a[0]>lat)!==(b[0]>lat)) && (lng < (b[1]-a[1])*(lat-a[0])/(b[0]-a[0])+a[1])) c=!c; } return c; }
+function inPolys(lat,lng,polys){ return polys.some(p=>inRing(lat,lng,p[0]) && !p.slice(1).some(h=>inRing(lat,lng,h))); }
+function zoneAt(lat,lng){ for(let i=0;i<ZR.length;i++) if(inPolys(lat,lng,ZR[i])) return D.zones[i]; return null; }
+
+const chip = document.getElementById('chip');
+L.DomEvent.disableClickPropagation(chip);
+let watchId=null, meMarker=null, meCircle=null, firstFix=false, lastZone;
+function showChip(cls, title, sub){ chip.className='chip '+cls; chip.innerHTML=`<b>${title}</b>${sub?`<small>${sub}</small>`:''}`; chip.hidden=false; }
+
+const LocCtl = L.Control.extend({ options:{position:'topleft'}, onAdd(){
+  const b = L.DomUtil.create('button','loc-btn'); b.type='button'; b.id='locbtn';
+  b.title='Show my location'; b.setAttribute('aria-label','Show my location'); b.setAttribute('aria-pressed','false');
+  b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
+  L.DomEvent.disableClickPropagation(b);
+  L.DomEvent.on(b,'click',()=> watchId===null ? startLoc() : (meMarker && map.getBounds().contains(meMarker.getLatLng()) && map.getZoom()>=14 ? stopLoc() : recenter()));
+  return b; }});
+map.addControl(new LocCtl());
+const btn = () => document.getElementById('locbtn');
+
+function startLoc(){
+  if(!('geolocation' in navigator)){ showChip('err','Location unavailable','This browser has no location support.'); return; }
+  if(!window.isSecureContext){ showChip('err','Location needs HTTPS','Open the map from an https:// address.'); return; }
+  firstFix=false; btn().classList.add('wait'); btn().setAttribute('aria-pressed','true');
+  showChip('ok','Finding you…','Allow location access if asked.');
+  watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:5000, timeout:20000});
+}
+function stopLoc(){
+  if(watchId!==null) navigator.geolocation.clearWatch(watchId); watchId=null;
+  [meMarker,meCircle].forEach(l=>l&&map.removeLayer(l)); meMarker=meCircle=null; lastZone=undefined;
+  btn().classList.remove('on','wait'); btn().setAttribute('aria-pressed','false'); btn().title='Show my location'; chip.hidden=true;
+}
+function recenter(){ if(meMarker) map.flyTo(meMarker.getLatLng(), Math.max(map.getZoom(),15), {duration:.5}); }
+function drawMe(ll, acc){
+  if(!meCircle) meCircle = L.circle(ll,{renderer:R, radius:acc, color:'#2a7de1', weight:1, fillColor:'#2a7de1', fillOpacity:.12, interactive:false});
+  meCircle.setLatLng(ll).setRadius(acc); if(!map.hasLayer(meCircle)) meCircle.addTo(map); meCircle.bringToFront();
+  if(!meMarker) meMarker = L.marker(ll,{icon:L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[0,0]}), keyboard:false, interactive:false, zIndexOffset:1000});
+  meMarker.setLatLng(ll); if(!map.hasLayer(meMarker)) meMarker.addTo(map);
+}
+function onPos(p){
+  const lat=p.coords.latitude, lng=p.coords.longitude, acc=Math.round(p.coords.accuracy);
+  const ll=L.latLng(lat,lng); drawMe(ll, acc);
+  btn().classList.remove('wait'); btn().classList.add('on'); btn().title='Centre on me (tap again to stop)';
+  if(!firstFix){ firstFix=true; map.flyTo(ll, Math.max(map.getZoom(),15), {duration:.6}); }
+  const z = inPolys(lat,lng,BR) ? zoneAt(lat,lng) : null;
+  const sub = `±${acc} m${acc>100?' · low accuracy, step outside':''}`;
+  if(!inPolys(lat,lng,BR)) showChip('err','Outside the game area','City of Edinburgh only · '+sub);
+  else if(!z) showChip('ok','Playable',sub);
+  else showChip(z.t, TIERS[z.t].label, z.n+' · '+sub);
+  // buzz when crossing into a restricted tier
+  const now = z ? z.t : 'out';
+  if(lastZone!==undefined && now!==lastZone && (now==='exclude'||now==='caution') && navigator.vibrate) navigator.vibrate([120,80,120]);
+  lastZone = now;
+}
+function onErr(e){
+  btn().classList.remove('wait');
+  const msg = {1:['Location blocked','Allow location for this site in your browser settings.'],2:['Position unavailable','Try again outdoors or with Wi-Fi on.'],3:['Location timed out','Still trying. Move to open sky.']}[e.code]||['Location error',e.message];
+  showChip('err',msg[0],msg[1]);
+  if(e.code===1){ navigator.geolocation.clearWatch(watchId); watchId=null; btn().classList.remove('on'); btn().setAttribute('aria-pressed','false'); }
+}
+build();
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+mq.addEventListener && mq.addEventListener('change', build);
+new MutationObserver(build).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>

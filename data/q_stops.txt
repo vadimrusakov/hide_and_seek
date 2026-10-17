@@ -1,0 +1,8 @@
+[out:json][timeout:170];
+(
+ node["highway"="bus_stop"](55.85,-3.47,56.01,-3.05);
+ node["public_transport"="platform"]["bus"="yes"](55.85,-3.47,56.01,-3.05);
+ node["railway"="tram_stop"](55.85,-3.47,56.01,-3.05);
+ node["public_transport"="stop_position"]["tram"="yes"](55.85,-3.47,56.01,-3.05);
+);
+out qt;

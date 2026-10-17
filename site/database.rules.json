@@ -1,0 +1,12 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "games": {
+      "$code": {
+        ".read": "auth != null && $code.matches(/^[A-Z2-9]{5}$/)",
+        ".write": "auth != null && $code.matches(/^[A-Z2-9]{5}$/)"
+      }
+    }
+  }
+}

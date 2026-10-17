@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Edinburgh Seek Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* Layout: full-screen map, hint bar on top, control sheet at the bottom */
+:root{
+  --bg:#f6f7f4; --panel:#ffffff; --fg:#1d2321; --muted:#5f6b66; --line:#d9dfdb;
+  --accent:#0b6e4f; --accent-fg:#ffffff; --measure:#c2410c; --circle:#1d4ed8; --shade:#1d2321;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121614; --panel:#1b211e; --fg:#e9eeeb; --muted:#9aa8a1; --line:#2e3833;
+  --accent:#34b38a; --accent-fg:#0d1311; --measure:#fb923c; --circle:#60a5fa; --shade:#000000;
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.35 var(--font);overflow:hidden}
+#map{position:fixed;inset:0}
+#hint{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top,0px) + 10px);z-index:1000;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;
+  box-shadow:0 2px 10px rgba(0,0,0,.15);display:flex;gap:10px;align-items:baseline;justify-content:space-between}
+#hint .msg{color:var(--muted);font-size:14px;min-width:0}
+#hint .val{font-weight:700;font-size:20px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--fg)}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);border-top:1px solid var(--line);
+  padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);display:flex;flex-direction:column;gap:8px;
+  box-shadow:0 -2px 12px rgba(0,0,0,.12)}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button,select,input{font:inherit;color:var(--fg)}
+button{border:1px solid var(--line);background:var(--bg);border-radius:9px;padding:8px 12px;cursor:pointer;min-height:40px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+.seg{display:flex;flex:1;gap:6px}
+.seg button{flex:1}
+.chip{padding:6px 10px;min-height:34px;font-variant-numeric:tabular-nums}
+label.r{display:flex;align-items:center;gap:6px;color:var(--muted)}
+#radius{width:76px;padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:var(--bg);font-variant-numeric:tabular-nums}
+select{padding:7px 8px;border:1px solid var(--line);border-radius:9px;background:var(--bg);min-height:36px}
+.spacer{flex:1}
+#list{max-height:30vh;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.item{display:flex;align-items:center;gap:6px;font-size:14px;padding:4px 0;border-top:1px solid var(--line)}
+.item .sw{width:12px;height:12px;border-radius:50%;flex:none}
+.item .t{flex:1;min-width:0;font-variant-numeric:tabular-nums}
+.item button{min-height:32px;padding:4px 9px;font-size:13px}
+.dist-label{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 6px;
+  font:700 13px var(--font);white-space:nowrap;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.me-dot{width:16px;height:16px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 2px rgba(37,99,235,.4)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="hint"><span class="msg" id="msg">Tap two points to measure.</span><span class="val" id="val"></span></div>
+
+<div id="sheet">
+  <div class="row">
+    <div class="seg">
+      <button id="m-measure" class="on">Measure</button>
+      <button id="m-circle">Circle</button>
+    </div>
+    <button id="locate" title="Show my location">◎ Me</button>
+  </div>
+
+  <div class="row" id="circle-opts" hidden>
+    <label class="r" for="radius">Radius <input id="radius" type="number" inputmode="decimal" min="0.05" step="0.05" value="1"> km</label>
+    <button class="chip" data-r="0.5">0.5</button>
+    <button class="chip" data-r="1">1</button>
+    <button class="chip" data-r="2">2</button>
+    <button class="chip" data-r="5">5</button>
+    <button class="chip" data-r="10">10</button>
+  </div>
+
+  <div class="row">
+    <button id="from-me">Start from me</button>
+    <span class="spacer"></span>
+    <button id="toggle-list">Shapes (0)</button>
+    <button id="undo">Undo</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div class="row" id="confirm-row" hidden>
+    <span style="flex:1">Delete every shape?</span>
+    <button id="clear-yes" class="on">Delete all</button>
+    <button id="clear-no">Cancel</button>
+  </div>
+
+  <div id="list" hidden></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  const R_EARTH = 6371.0088; // km, mean radius
+  const KEY = 'edinburgh-seek-map-v1';
+  const $ = id => document.getElementById(id);
+
+  // ---- geometry ----
+  const rad = d => d*Math.PI/180, deg = r => r*180/Math.PI;
+  function haversine(a,b){
+    const dLat=rad(b[0]-a[0]), dLng=rad(b[1]-a[1]);
+    const h=Math.sin(dLat/2)**2+Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dLng/2)**2;
+    return 2*R_EARTH*Math.asin(Math.sqrt(h));
+  }
+  function destination(c,km,bearingDeg){
+    const d=km/R_EARTH, br=rad(bearingDeg), la=rad(c[0]), lo=rad(c[1]);
+    const la2=Math.asin(Math.sin(la)*Math.cos(d)+Math.cos(la)*Math.sin(d)*Math.cos(br));
+    const lo2=lo+Math.atan2(Math.sin(br)*Math.sin(d)*Math.cos(la),Math.cos(d)-Math.sin(la)*Math.sin(la2));
+    return [deg(la2),deg(lo2)];
+  }
+  function ring(c,km,n=128){const p=[];for(let i=0;i<n;i++)p.push(destination(c,km,360*i/n));return p;}
+  const fmt = km => km.toFixed(km<10?2:1)+' km';
+
+  // ---- state ----
+  let shapes=[], mode='measure', pending=null, me=null, listOpen=false;
+  try{ const s=JSON.parse(localStorage.getItem(KEY)||'null'); if(s&&Array.isArray(s.shapes)) shapes=s.shapes; }catch(e){}
+  function save(){ try{ localStorage.setItem(KEY,JSON.stringify({shapes})); }catch(e){} }
+
+  // ---- map ----
+  const map=L.map('map',{zoomControl:false,attributionControl:true}).setView([55.9533,-3.1883],13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  const layer=L.layerGroup().addTo(map), pendLayer=L.layerGroup().addTo(map), meLayer=L.layerGroup().addTo(map);
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  function label(latlng,text){
+    return L.marker(latlng,{interactive:false,icon:L.divIcon({className:'',html:'<div class="dist-label">'+text+'</div>',iconSize:null,iconAnchor:[-6,12]})});
+  }
+  function dot(latlng,color){ return L.circleMarker(latlng,{radius:6,color:'#fff',weight:2,fillColor:color,fillOpacity:1,interactive:false}); }
+
+  function render(){
+    layer.clearLayers();
+    const mc=css('--measure'), cc=css('--circle'), sc=css('--shade');
+    shapes.forEach((s,i)=>{
+      if(s.type==='line'){
+        const d=haversine(s.a,s.b);
+        L.polyline([s.a,s.b],{color:mc,weight:4,dashArray:'8 6',interactive:false}).addTo(layer);
+        dot(s.a,mc).addTo(layer); dot(s.b,mc).addTo(layer);
+        label([(s.a[0]+s.b[0])/2,(s.a[1]+s.b[1])/2],fmt(d)).addTo(layer);
+      } else {
+        const pts=ring(s.c,s.r);
+        if(s.shade==='out'){ // hider inside: shade everything outside
+          const world=[[85,-180],[85,180],[-85,180],[-85,-180]];
+          L.polygon([world,pts],{stroke:false,fillColor:sc,fillOpacity:.35,interactive:false}).addTo(layer);
+        }
+        L.polygon(pts,{color:cc,weight:3,fill:s.shade==='in',fillColor:sc,fillOpacity:s.shade==='in'?.35:0,interactive:false}).addTo(layer);
+        dot(s.c,cc).addTo(layer);
+        label(pts[0],fmt(s.r)).addTo(layer);
+      }
+    });
+    renderList(); save();
+  }
+
+  const shadeText={none:'No shading',in:'Hider outside',out:'Hider inside'};
+  const shadeNext={none:'out',out:'in',in:'none'};
+  function renderList(){
+    $('toggle-list').textContent='Shapes ('+shapes.length+')';
+    const el=$('list'); el.innerHTML='';
+    shapes.forEach((s,i)=>{
+      const row=document.createElement('div'); row.className='item';
+      const sw=document.createElement('span'); sw.className='sw'; sw.style.background=s.type==='line'?css('--measure'):css('--circle');
+      const t=document.createElement('span'); t.className='t';
+      t.textContent = s.type==='line' ? 'Distance '+fmt(haversine(s.a,s.b)) : 'Circle '+fmt(s.r);
+      row.append(sw,t);
+      if(s.type==='circle'){
+        const b=document.createElement('button'); b.textContent=shadeText[s.shade||'none'];
+        b.title='Shade the area the hider cannot be in';
+        b.onclick=()=>{s.shade=shadeNext[s.shade||'none'];render();};
+        row.append(b);
+      }
+      const go=document.createElement('button'); go.textContent='Show';
+      go.onclick=()=>{ if(s.type==='line') map.fitBounds([s.a,s.b],{padding:[60,60]}); else map.fitBounds(L.latLngBounds(ring(s.c,s.r,16)),{padding:[40,40]}); };
+      const del=document.createElement('button'); del.textContent='✕'; del.title='Delete'; del.setAttribute('aria-label','Delete');
+      del.onclick=()=>{shapes.splice(i,1);render();};
+      row.append(go,del); el.append(row);
+    });
+    $('list').hidden=!listOpen||!shapes.length;
+  }
+
+  // ---- interaction ----
+  function setHint(msg,val){ $('msg').textContent=msg; $('val').textContent=val||''; }
+  function radiusKm(){ const v=parseFloat($('radius').value); return isFinite(v)&&v>0?v:null; }
+
+  function setMode(m){
+    mode=m; pending=null; pendLayer.clearLayers();
+    $('m-measure').classList.toggle('on',m==='measure');
+    $('m-circle').classList.toggle('on',m==='circle');
+    $('circle-opts').hidden=m!=='circle';
+    $('from-me').textContent = m==='circle' ? 'Circle on me' : 'Start from me';
+    setHint(m==='measure'?'Tap two points to measure.':'Tap the map to place a circle centre.');
+  }
+
+  function addPoint(ll){
+    if(mode==='measure'){
+      if(!pending){
+        pending=ll; pendLayer.clearLayers(); dot(ll,css('--measure')).addTo(pendLayer);
+        setHint('Now tap the second point.');
+      } else {
+        shapes.push({type:'line',a:pending,b:ll}); pending=null; pendLayer.clearLayers();
+        render(); setHint('Distance (straight line)',fmt(haversine(shapes[shapes.length-1].a,ll)));
+      }
+    } else {
+      const r=radiusKm(); if(!r){ setHint('Enter a radius above 0 km first.'); return; }
+      shapes.push({type:'circle',c:ll,r,shade:'none'}); render();
+      setHint('Circle placed. Set shading in Shapes.',fmt(r));
+    }
+  }
+
+  map.on('click',e=>{
+    const ll=[e.latlng.lat,e.latlng.lng];
+    if(mode==='measure'&&pending){
+      // live readout already shown as a line after second tap
+    }
+    addPoint(ll);
+  });
+  map.on('mousemove',e=>{
+    if(mode!=='measure'||!pending) return;
+    const ll=[e.latlng.lat,e.latlng.lng];
+    pendLayer.clearLayers(); dot(pending,css('--measure')).addTo(pendLayer);
+    L.polyline([pending,ll],{color:css('--measure'),weight:3,dashArray:'4 6',interactive:false}).addTo(pendLayer);
+    setHint('Now tap the second point.',fmt(haversine(pending,ll)));
+  });
+
+  $('m-measure').onclick=()=>setMode('measure');
+  $('m-circle').onclick=()=>setMode('circle');
+  document.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ $('radius').value=b.dataset.r; });
+  $('undo').onclick=()=>{ if(pending){pending=null;pendLayer.clearLayers();setMode(mode);return;} shapes.pop(); render(); };
+  $('clear').onclick=()=>{ if(shapes.length) $('confirm-row').hidden=false; };
+  $('clear-no').onclick=()=>{ $('confirm-row').hidden=true; };
+  $('clear-yes').onclick=()=>{ shapes=[]; pending=null; pendLayer.clearLayers(); $('confirm-row').hidden=true; render(); setMode(mode); };
+  $('toggle-list').onclick=()=>{ listOpen=!listOpen; renderList(); };
+
+  // ---- GPS ----
+  let watchId=null, meMarker=null, meAcc=null, follow=false;
+  function startLocate(cb){
+    if(!navigator.geolocation){ setHint('Location is not available in this browser.'); return; }
+    if(me&&cb){ cb(); return; }
+    setHint('Finding your location…');
+    if(watchId===null){
+      watchId=navigator.geolocation.watchPosition(p=>{
+        me=[p.coords.latitude,p.coords.longitude];
+        if(!meMarker){
+          meAcc=L.circle(me,{radius:p.coords.accuracy,color:'#2563eb',weight:1,fillOpacity:.1,interactive:false}).addTo(meLayer);
+          meMarker=L.marker(me,{interactive:false,icon:L.divIcon({className:'',html:'<div class="me-dot"></div>',iconSize:[16,16],iconAnchor:[8,8]})}).addTo(meLayer);
+          map.setView(me,Math.max(map.getZoom(),15));
+        } else { meMarker.setLatLng(me); meAcc.setLatLng(me).setRadius(p.coords.accuracy); }
+        if(follow){ map.panTo(me); follow=false; }
+        if(cb){ const f=cb; cb=null; f(); } else if($('msg').textContent.startsWith('Finding')) setHint('Accuracy ±'+Math.round(p.coords.accuracy)+' m');
+      },err=>{
+        watchId=null;
+        setHint(err.code===1?'Location permission denied. Allow it in browser settings.':'Could not get your location. Open the page over https.');
+      },{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+    }
+  }
+  $('locate').onclick=()=>{ if(me){ map.setView(me,Math.max(map.getZoom(),15)); } else { follow=true; startLocate(); } };
+  $('from-me').onclick=()=>startLocate(()=>{
+    if(mode==='measure'){ pending=null; addPoint(me.slice()); }
+    else addPoint(me.slice());
+  });
+
+  setMode('measure'); render();
+})();
+</script>
+</body>
+</html>

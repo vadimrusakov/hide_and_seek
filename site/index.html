@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7d1e2c">
+<title>Seek Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css?v=2026-10-17.4">
+</head>
+<body>
+<div class="app" id="app">
+  <div id="map" role="application" aria-label="Game map">
+    <div class="topbar" id="topbar" hidden>
+      <button class="tb-code" id="tb-code" type="button" title="Game settings"></button>
+      <span class="tb-sum" id="tb-sum"></span>
+    </div>
+    <div class="toast" id="toast" hidden aria-live="polite"></div>
+    <div class="maphint" id="maphint" hidden></div>
+  </div>
+
+  <aside class="sheet" id="sheet" hidden>
+    <div class="grab" id="grab" role="button" tabindex="0" aria-label="Show or hide the panel"><span></span></div>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+    <div class="panes" id="panes"></div>
+  </aside>
+
+  <section class="lobby" id="lobby">
+    <div class="lobby-card">
+      <h1>Seek <span>Map</span></h1>
+      <p class="sub">Hide and seek across the city, Jet Lag style. Questions, answers and pins are shared live with everyone in the game.</p>
+
+      <label class="field"><span>Your name</span><input id="lb-name" type="text" maxlength="24" autocomplete="nickname" placeholder="Name"></label>
+
+      <div class="field"><span>Your role</span>
+        <div class="seg" id="lb-role">
+          <button type="button" data-v="seeker" class="on">Seeker</button>
+          <button type="button" data-v="hider">Hider</button>
+        </div>
+      </div>
+
+      <div class="lb-split">
+        <div class="lb-col">
+          <h2>New game</h2>
+          <label class="field"><span>Region</span><select id="lb-region"></select></label>
+          <button type="button" class="btn primary" id="lb-create">Create game</button>
+        </div>
+        <div class="lb-col">
+          <h2>Join a game</h2>
+          <label class="field"><span>Game code</span><input id="lb-code" type="text" maxlength="5" autocapitalize="characters" autocomplete="off" placeholder="ABCDE" spellcheck="false"></label>
+          <button type="button" class="btn" id="lb-join">Join</button>
+        </div>
+      </div>
+      <p class="lb-msg" id="lb-msg" role="status"></p>
+      <p class="lb-foot"><button type="button" class="linkbtn" id="lb-local">Practice on this device only</button> · no sync, nothing leaves your phone</p>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="config.js?v=2026-10-17.4"></script>
+<script src="app.js?v=2026-10-17.4"></script>
+</body>
+</html>
