@@ -43,6 +43,8 @@ def area_m2(g):
 
 boundary = unary_union([Polygon(dec(r[0]), [dec(h) for h in r[1:]]).buffer(0) for r in D['boundary']])
 bnd_near = boundary.buffer(0.004)
+# Anything outside the play area is treated as if it does not exist (40 m tolerance for coastal/edge features)
+INB = boundary.buffer(0.0005)
 
 # ---------------- grid
 minx, miny, maxx, maxy = boundary.bounds
@@ -105,7 +107,7 @@ DROP = {
               'Moray House Library', 'National Library of Scotland, Causewayside - Maps Reading Room', 'New College Library',
               'Noreen and Kenneth Murray Library', 'Playfair Library', 'RBGE Herbarium & Library', 'Sighthill Learning Resource Centre (LRC)',
               'Signet Library', 'The Lex Davidson Library', 'West Lothian Local History Library'],
-  'cinema': ['The Fraser Centre', 'Scotsman Picturehouse', ('Odeon', 55.946)],
+  'cinema': ['The Fraser Centre', 'Scotsman Picturehouse'],
   'theatre': ['Assembly Rooms', 'General Assembly Hall', 'Gordon Aikman Lecture Theatre', 'Monkey Barrel 2', 'Monkey Barrel Comedy', 'Monkey Barrel MB3 MB4',
               'Old College Quad', 'Open Air Theatre', 'Quincentenary Hall', 'Reid Concert Hall', 'Ross Theatre', "St Cecilia's Hall", 'Symposium Hall',
               'The Hub', 'The Prince Philip Building', "The Queen's Hall", 'The Stand Comedy Club', 'The Studio', 'Usher Hall'],
@@ -128,7 +130,7 @@ DROP = {
   'water': ['Duck Pond'],
 }
 RENAME = {
-  'cinema': {'ODEON MULTIPLEX CINEMA': 'Odeon (Wester Hailes)', ('Odeon', 55.935): 'Odeon (Fort Kinnaird)', ('Vue', 55.883): 'Vue (Livingston)',
+  'cinema': {'ODEON MULTIPLEX CINEMA': 'Odeon (Wester Hailes)', ('Odeon', 55.935): 'Odeon (Fort Kinnaird)', ('Odeon', 55.946): 'Odeon (Lothian Road)', ('Vue', 55.883): 'Vue (Livingston)',
              ('Vue', 55.956): 'Vue (Omni Centre)', ('Vue', 55.981): 'Vue (Ocean Terminal)', 'Everyman': 'Everyman (St James Quarter)', 'Cineworld': 'Cineworld (Fountain Park)'},
   'golf': {'East Course': 'Dalmahoy Golf Club', 'Bruntsfield Links': 'Bruntsfield Links Golfing Society', 'Deer Park': 'Deer Park Golf Club',
            'Halkett Course': 'Dunfermline Golf Club (Halkett)', 'Pitfirrane Course': 'Dunfermline Golf Club (Pitfirrane)'},
@@ -157,6 +159,10 @@ def curate(c):
     unused = [k for k in drops if not any(x[0] == 'drop' and x[1] == c['id'] and (x[2] == (k if isinstance(k, str) else k[0])) for x in CURATED)]
     if unused: print('WARN unmatched drops', c['id'], unused)
     keep.sort(key=lambda r: r[1]); c['items'] = keep
+for c in cats:
+    before = len(c['items'])
+    c['items'] = [i for i in c['items'] if INB.contains(Point(i[3], i[2]))]
+    print('  outside dropped', c['id'], before - len(c['items']))
 for c in cats: curate(c)
 
 # ---------------- areas: parks, water
@@ -178,7 +184,9 @@ def area_cat(cid, label, test, min_ha):
         t = e.get('tags', {})
         if not test(t): continue
         g = area_geom(e)
-        if g is None or g.is_empty or not g.intersects(bnd_near.buffer(0.03)): continue
+        if g is None or g.is_empty: continue
+        g = g.intersection(INB)
+        if g.is_empty or g.area == 0: continue
         feats.append([t['name'], g, e['type'][0] + str(e['id'])])
     # merge same-name features within ~200 m
     groups = []
@@ -214,7 +222,7 @@ cats.append({'id': 'ward', 'label': 'Council ward', 'kind': 'area', 'only': 'mat
 
 # coastline (measuring only) — one line feature
 coast_lines = [LineString(dec(c)) for c in D['coast']]
-coast_lines = [l.intersection(bnd_near.buffer(0.02)) for l in coast_lines]
+coast_lines = [l.intersection(boundary.buffer(0.004)) for l in coast_lines]  # the coast runs along the boundary itself
 cl = []
 for l in coast_lines:
     for part in ([l] if l.geom_type == 'LineString' else getattr(l, 'geoms', [])):
@@ -232,12 +240,13 @@ for e in sorted(stops_raw, key=lambda e: e['id']):
     if not nm: nm = 'Unnamed stop'
     mode = 'tram' if tram else 'bus'
     pt = (e['lon'], e['lat'])
-    if not boundary.buffer(0.0015).contains(Point(pt)): continue
+    if not INB.contains(Point(pt)): continue
     c = next((c for c in clusters if c[0] == nm and c[1] == mode and m_dist((sum(c[2]) / len(c[2]), sum(c[3]) / len(c[3])), pt) < 150), None)
     if c: c[2].append(pt[0]); c[3].append(pt[1])
     else: clusters.append([nm, mode, [pt[0]], [pt[1]], 'n' + str(e['id'])])
 stops = []
 for nm, mode, lons, lats, sid in clusters:
+    if not boundary.contains(Point(sum(lons) / len(lons), sum(lats) / len(lats))): continue  # stops: strictly inside the play area
     stops.append([sid, nm, round(sum(lats) / len(lats), 5), round(sum(lons) / len(lons), 5), mode])
 stops.sort(key=lambda s: (s[1], s[2]))
 

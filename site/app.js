@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-17.4';
+const APP_VERSION = '2026-10-17.5';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const LS = {
@@ -268,7 +268,7 @@ function qText(q) {
   if (q.type === 'photo') return p.text || `Send a photo of ${p.subj || 'something'}.`;
   if (q.type === 'radar') return `Are you within ${fmtD(p.r)} of me?`;
   if (q.type === 'thermo') return `${p.td ? fmtD(p.td) + ' thermometer: I' : 'I'} moved ${fmtD(dm(p.la1, p.lo1, p.la2, p.lo2))}. Am I hotter or colder?`;
-  if (q.type === 'measure') return `Are you closer to or further from your nearest ${catLabel(p.cat).toLowerCase()} than me?`;
+  if (q.type === 'measure') return p.cat === 'coast' ? 'Compared to me, are you closer to or further from the coastline?' : `Compared to me, are you closer to or further from the nearest ${catLabel(p.cat).toLowerCase()}?`;
   if (q.type === 'match') return p.cat === 'ward' ? 'Are you in the same council ward as me?' : `Is your nearest ${catLabel(p.cat).toLowerCase()} the same as mine?`;
   return '';
 }
