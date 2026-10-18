@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-18.1';
+const APP_VERSION = '2026-10-18.2';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -345,7 +345,7 @@ function checkLate() {
     const answeredLate = q.a && q.at && qLate(q);
     if (!unansweredLate && !answeredLate && !q.late) return;
     lateSeen.add(q.id); LS.set('seek-late:' + S.code, [...lateSeen]);
-    if (!q.late && S.game.qs?.[q.id]) W.set('qs/' + q.id + '/late', true);
+    if (!q.late && S.game.qs?.[q.id]) { W.set('qs/' + q.id + '/late', true); ntfyTo('all', 'Answer time expired', `${qText(q)} The hider skips the card draw.`, 5, ['hourglass']); }
     showModal('Answer time expired', `${QT[q.type].label}: “${qText(q)}”\nThe hider did not answer within ${Math.round(limitMs(q) / 60000)} min, so they skip the card draw for this question.`);
     alertUser('Answer time expired', `${qText(q)} The hider skips the card draw.`, 'late-' + q.id, [400, 150, 400]);
   });
@@ -363,6 +363,10 @@ function tick() {
     const msg = { hiding: 'Game started. Hider, go to your stop!', seeking: 'Hiding time is over. Seekers can ask questions now.', ended: 'Game over.' }[p];
     if (msg) alertUser({ hiding: 'Game started', seeking: 'Seeking begins', ended: 'Game over' }[p], msg, 'phase', [300, 100, 300]);
     if (p === 'seeking' && S.role === 'hider' && !S.hider) toast('Hiding time is over and you have not locked a stop.', 8000);
+    if (p === 'seeking' && !S.game.meta?.seekNotified) setTimeout(() => { // stagger so only the first open phone sends it
+      if (S.game.meta?.seekNotified || phase() !== 'seeking') return;
+      W.set('meta/seekNotified', true); ntfyTo('all', 'Seeking begins', 'Hiding time is over. Seekers can ask questions now.', 5, ['mag']);
+    }, 200 + Math.random() * 4000);
     render();
   }
   lastPhase = p;
@@ -703,6 +707,28 @@ function drawModal() {
   $('#modal-ok').onclick = () => { modalQ.shift(); drawModal(); };
 }
 
+/* ------------------------------------------------------------------ ntfy: real push notifications (work with the phone locked) */
+const NTFY = 'https://ntfy.sh/';
+function myTopic() {
+  let t = LS.get('seek-ntfy-topic', null);
+  if (!t || !/^[A-Za-z0-9_-]{8,64}$/.test(t)) { const a = 'abcdefghijkmnpqrstuvwxyz23456789'; t = 'seekmap-' + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => a[b % a.length]).join(''); LS.set('seek-ntfy-topic', t); }
+  return t;
+}
+const ntfyOn = () => !!LS.get('seek-ntfy-on', false);
+const gameLink = () => location.origin + location.pathname + (S.mode === 'fb' && S.code ? '?g=' + S.code : '');
+// topics of other players matching a role filter ('hider' | 'seeker' | 'all')
+function ntfyTopics(who) {
+  return [...new Set(Object.entries(S.game.players || {}).filter(([uid, p]) => uid !== S.uid && p && typeof p.ntfy === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(p.ntfy)
+    && (who === 'all' || (who === 'hider' ? p.role === 'hider' : p.role !== 'hider'))).map(([, p]) => p.ntfy))];
+}
+function ntfySend(topics, title, message, priority = 4, tags = []) {
+  topics.forEach(topic => {
+    // plain POST with a JSON body (no custom headers, so no CORS preflight)
+    fetch(NTFY, { method: 'POST', body: JSON.stringify({ topic, title, message, priority, tags, click: gameLink() }) }).catch(() => {});
+  });
+}
+const ntfyTo = (who, title, message, priority, tags) => ntfySend(ntfyTopics(who), title, message, priority, tags);
+
 /* ------------------------------------------------------------------ UI scaffolding */
 function toast(msg, ms = 3500) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); }
 function hint(msg, cancel) {
@@ -991,6 +1017,18 @@ PANES.game = () => {
     <label class="check"><input type="checkbox" data-act="sound" ${S.ui.sound ? 'checked' : ''}> Play a sound</label>
     <label class="check"><input type="checkbox" data-act="wake" ${S.ui.wake ? 'checked' : ''}> Keep the screen on while this page is open</label>
     <button type="button" class="btn small ghost" data-act="test-alert">Test alert</button></div>`;
+  h += `<div class="grp"><h2>Alerts with the phone locked</h2>
+    <p class="note">For a real buzz when the screen is locked or the browser is closed, use the free <b>ntfy</b> app. Messages contain question text and answers only, never locations.</p>
+    <label class="check"><input type="checkbox" data-act="ntfy-on" ${ntfyOn() ? 'checked' : ''}> Send my alerts to the ntfy app</label>
+    ${ntfyOn() ? `<ol class="steps small">
+      <li>Install ntfy: <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>. Allow notifications.</li>
+      <li>In ntfy, tap <b>+</b>, paste this topic and tap <b>Subscribe</b>:
+        <div class="row"><code class="topic mono" id="ntfy-topic">${esc(myTopic())}</code><button type="button" class="btn small" data-act="ntfy-copy">Copy</button></div></li>
+      <li>Lock your phone, then tap <b>Send test push</b> here on another device, or tap it now and check the ntfy app.</li>
+    </ol>
+    <div class="row"><button type="button" class="btn small" data-act="ntfy-test">Send test push</button></div>
+    <p class="note">Keep this topic private: anyone who knows it can read your alerts. You only need to subscribe once; the same topic works in every game on this phone.</p>` : ''}
+    </div>`;
   h += `<div class="grp"><h2>Players</h2><div class="list">${players.length ? players.map(p => `<div class="li"><span class="nm">${esc(p.name || 'Someone')}<small>${p.role === 'hider' ? 'Hider' : 'Seeker'} · seen ${ago(p.seen)}</small></span></div>`).join('') : '<div class="li muted">Only you so far.</div>'}</div></div>`;
   h += `<div class="grp"><h2>Region</h2><p class="small">${esc(S.pack.name)}. ${esc(S.pack.note)}</p><p class="small muted mono">App version ${APP_VERSION}</p></div>`;
   if ((ph === 'hiding' || ph === 'seeking') && !paused()) h += `<div class="grp"><h2>Pause</h2><p class="note">Stops every clock for everyone, including answer timers, until someone resumes.</p>
@@ -1118,6 +1156,8 @@ function act(el) {
       const q = draftQ(); if (!q || q.err) { if (q && q.err) toast(q.err, 6000); drawDraft(); render(); return; }
       if (q.type !== 'photo') q.p.acc = S.me.acc;
       W.push('qs', Object.assign(q, { by: S.name || 'Seeker', uid: S.uid, t: B.now(), pt: S.game.meta?.pausedTotal || 0 }));
+      ntfyTo('hider', `New ${QT[q.type].label.toLowerCase()} question · ${Math.round(limitMs(q) / 60000)} min to answer`, qText(q), 5, ['question']);
+      ntfyTo('seeker', `${S.name || 'A seeker'} asked a ${QT[q.type].label.toLowerCase()} question`, qText(q), 2, ['speech_balloon']);
       S.preview = null; S.previewMask = null; A.pins = []; A.follow = true; S.ui.tab = 'log'; drawDraft(); toast('Question sent.'); render(); renderMask(); break;
     }
     case 'q-show': { const q = allQs().find(x => x.id === id); if (!q || !isDeduce(q)) return; const p = q.p;
@@ -1132,6 +1172,7 @@ function act(el) {
     case 'q-del-yes': W.set('qs/' + id, null); S.ui.confirm = null; break;
     case 'confirm-no': S.ui.confirm = null; render(); break;
     case 'answer': {
+      { const q1 = (S.game.qs || {})[id]; if (q1) ntfyTo('seeker', `Answer: ${QT[q1.type].names[v]}`, qText(Object.assign({}, q1)), 4, ['white_check_mark']); }
       { const q0 = (S.game.qs || {})[id]; if (q0) { const late = q0.late || qElapsed(Object.assign({ id }, q0)) > limitMs(q0); setTimeout(() => toast(late ? 'Answer sent late: no card draw.' : `Answer sent. ${cardText(q0.type)}.`, 5000), 50); } } const q = (S.game.qs || {})[id]; if (!q) return; const m = S.game.meta || {}; W.set('qs/' + id, Object.assign({}, q, { a: v, at: B.now(), apt: (m.pausedTotal || 0) + (m.pausedAt ? Math.max(0, now() - m.pausedAt) : 0), aby: S.name || 'Hider' })); break; }
     case 'gps-on': startGPS(); break;
     case 'pick-stop': S.ui.pick = id; map.closePopup(); S.ui.tab = 'zone'; const s = S.L.stops.find(x => x.id === id); if (s) map.flyTo([s.la, s.lo], 15, { duration: .5 }); drawHider(); render(); break;
@@ -1158,17 +1199,21 @@ function act(el) {
     case 'role': if (started()) { toast('Roles are locked once the game starts.'); return; } if (S.role !== v) { S.role = v; LS.set('seek-role', v); S.ui.tab = null; S.preview = null; registerPlayer(); if (v === 'hider') { startGPS(); S.hider = LS.get(roundKey(), null); W.set('locs/' + S.uid, null); lastPush = null; } else { lastPush = null; pushLoc(); } drawDraft(); drawHider(); drawStops(); render(); renderMask(); } break;
     case 'g-safety': if (started()) return; W.set('meta/safety', el.checked); break;
     case 'start': S.ui.confirm = 'start'; render(); break;
-    case 'start-yes': S.ui.confirm = null; W.set('meta/endedAt', null); W.set('meta/startedAt', B.now()); break;
+    case 'start-yes': S.ui.confirm = null; W.set('meta/endedAt', null); W.set('meta/seekNotified', null); W.set('meta/startedAt', B.now());
+      ntfyTo('all', 'Game started', `Hiding time: ${S.game.meta?.hideMin ?? CFG.defaults.hideMin} min. Hider, go to your stop!`, 5, ['checkered_flag']); break;
     case 'end': S.ui.confirm = 'end'; render(); break;
     case 'pause': S.ui.confirm = 'pause'; render(); break;
-    case 'pause-yes': S.ui.confirm = null; if (!paused()) { W.set('meta/pausedBy', S.name || 'a player'); W.set('meta/pausedAt', B.now()); } break;
-    case 'resume': { const m = S.game.meta || {}; if (m.pausedAt) { W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } break; }
+    case 'pause-yes': S.ui.confirm = null; if (!paused()) { ntfyTo('all', 'Game paused', `Paused by ${S.name || 'a player'}. All clocks are stopped.`, 4, ['pause_button']); W.set('meta/pausedBy', S.name || 'a player'); W.set('meta/pausedAt', B.now()); } break;
+    case 'resume': { const m = S.game.meta || {}; if (m.pausedAt) { ntfyTo('all', 'Game resumed', 'Clocks are running again.', 4, ['arrow_forward']); W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } break; }
     case 'notif-on': if ('Notification' in window) Notification.requestPermission().then(() => render()); break;
+    case 'ntfy-on': LS.set('seek-ntfy-on', el.checked); if (el.checked) myTopic(); registerPlayer(); render(); break;
+    case 'ntfy-copy': { const t = myTopic(); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Topic copied. Paste it into ntfy.'), () => { const r = document.createRange(); r.selectNodeContents($('#ntfy-topic')); getSelection().removeAllRanges(); getSelection().addRange(r); toast('Select and copy the topic.'); }); break; }
+    case 'ntfy-test': ntfySend([myTopic()], 'Seek Map test', 'If your phone buzzed, ntfy alerts are working.', 5, ['tada']); toast('Test push sent. It should arrive in ntfy within a few seconds.'); break;
     case 'theme': LS.set('seek-theme', v); applyTheme(v); render(); break;
     case 'sound': S.ui.sound = el.checked; LS.set('seek-sound', el.checked); break;
     case 'wake': S.ui.wake = el.checked; LS.set('seek-wake', el.checked); wake(); break;
     case 'test-alert': alertUser('Test alert', 'This is how questions and answers will arrive.', 'test'); break;
-    case 'end-yes': { S.ui.confirm = null; const m = S.game.meta || {}; if (m.pausedAt) { W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } W.set('meta/endedAt', B.now()); break; }
+    case 'end-yes': { S.ui.confirm = null; ntfyTo('all', 'Game over', 'The seekers ended the game.', 4, ['trophy']); const m = S.game.meta || {}; if (m.pausedAt) { W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } W.set('meta/endedAt', B.now()); break; }
     case 'newround': S.ui.confirm = 'newround'; render(); break;
     case 'newround-yes': S.ui.confirm = null; W.set('meta/round', (S.game.meta?.round || 0) + 1); W.set('meta/pausedTotal', 0); W.set('meta/pausedAt', null); W.set('qs', null); W.set('locs', null); W.set('meta/startedAt', null); W.set('meta/endedAt', null); S.hider = null; drawHider(); break;
     case 'share-loc': S.ui.shareLoc = el.checked; LS.set('seek-share', el.checked); if (el.checked) startGPS(); else W.set('locs/' + S.uid, null); break;
@@ -1249,7 +1294,7 @@ function notify() {
     S.seenQ.add(q.id); if (q.a) S.seenA.add(q.id);
   });
 }
-function registerPlayer() { if (S.code && S.uid) W.set('players/' + S.uid, { name: S.name || (S.role === 'hider' ? 'Hider' : 'Seeker'), role: S.role, seen: B.now() }); }
+function registerPlayer() { if (S.code && S.uid) W.set('players/' + S.uid, { name: S.name || (S.role === 'hider' ? 'Hider' : 'Seeker'), role: S.role, seen: B.now(), ntfy: ntfyOn() ? myTopic() : null }); }
 
 /* ------------------------------------------------------------------ lobby & boot */
 const CODE_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

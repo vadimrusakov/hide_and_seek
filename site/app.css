@@ -214,3 +214,7 @@ label.check input{width:18px;height:18px;accent-color:var(--madder);margin:0;fle
 .sk-btn{margin-top:6px;color:#e8590c}
 .sk-btn.none{color:var(--muted)}
 .leaflet-touch .loc-btn{width:36px;height:36px}
+
+.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.steps a{color:var(--madder);font-weight:600}
+code.topic{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:6px 8px;font-size:12.5px;user-select:all;overflow-wrap:anywhere;flex:1;min-width:0}
