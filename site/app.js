@@ -5,9 +5,13 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-17.6';
+const APP_VERSION = '2026-10-18.1';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const applyTheme = t => {
+  if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) ? '#1b1d22' : '#7d1e2c';
+};
 const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
@@ -22,6 +26,7 @@ const ago = t => { if (!t) return ''; const s = Math.max(0, (Date.now() - t) / 1
 const nf = n => n.toLocaleString('en-GB');
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
+applyTheme(LS.get('seek-theme', 'system'));
 /* ------------------------------------------------------------------ state */
 const S = {
   pack: null, mode: null, code: null, role: 'seeker', name: LS.get('seek-name', ''), uid: null,
@@ -433,6 +438,11 @@ function initMap() {
     b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
     L.DomEvent.disableClickPropagation(b); L.DomEvent.on(b, 'click', () => { startGPS(); if (S.me) map.flyTo([S.me.la, S.me.lo], Math.max(map.getZoom(), 15), { duration: .5 }); else S.wantCenter = true; });
     return b; } }))());
+  map.addControl(new (L.Control.extend({ options: { position: 'topleft' }, onAdd() {
+    const b = L.DomUtil.create('button', 'loc-btn sk-btn'); b.type = 'button'; b.id = 'skbtn'; b.title = 'Show the seekers'; b.setAttribute('aria-label', 'Show the seekers on the map');
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M14.5 14.2c.8-.3 1.6-.5 2.5-.5 2.8 0 5 2.2 5 5"/></svg>';
+    L.DomEvent.disableClickPropagation(b); L.DomEvent.on(b, 'click', showSeekers);
+    return b; } }))());
   map.on('preclick', onMapClick); // preclick fires even when a pop-up layer swallows the click
   map.on('zoomend', () => { drawStops(); if (S.ui.layers.base === 'sketch') sketchZoom(); });
   setBase(); drawZones();
@@ -622,6 +632,16 @@ function drawSeekers() {
       .bindPopup(`<b>${esc(l.name)}</b><br><span class="muted">Seeker · updated ${ago(l.t)} · ±${l.acc || '?'} m</span>`).addTo(layers.seekers);
   });
 }
+function seekerLocs() {
+  return Object.entries(S.game.locs || {}).filter(([uid, l]) => uid !== S.uid && l && isFinite(l.la) && (S.game.players || {})[uid]?.role !== 'hider').map(([, l]) => l);
+}
+function showSeekers() {
+  const ls = seekerLocs();
+  if (!ls.length) { toast(S.role === 'hider' ? 'No seeker has shared their location yet.' : 'No other seeker is sharing their location yet.'); return; }
+  if (ls.length === 1) map.flyTo([ls[0].la, ls[0].lo], Math.max(map.getZoom(), 15), { duration: .5 });
+  else map.flyToBounds(L.latLngBounds(ls.map(l => [l.la, l.lo])).pad(0.3), { maxZoom: 16, duration: .5 });
+}
+function updateSeekerBtn() { const b = $('#skbtn'); if (b) b.classList.toggle('none', !seekerLocs().length); }
 let lastInside = null;
 function hiderZoneCheck() {
   if (S.role !== 'hider' || !S.hider || !S.me) return;
@@ -954,6 +974,9 @@ PANES.game = () => {
     <div class="field"><span>Role on this phone</span><div class="seg">${[['seeker', 'Seeker'], ['hider', 'Hider']].map(([v, l]) => `<button type="button" data-act="role" data-v="${v}" class="${S.role === v ? 'on' : ''}" ${lock ? 'disabled' : ''}>${l}</button>`).join('')}</div>
     ${lock ? '<p class="note">Roles are locked once the game starts.</p>' : ''}</div>
     ${S.role === 'seeker' ? `<label class="check"><input type="checkbox" data-act="share-loc" ${S.ui.shareLoc ? 'checked' : ''}> Share my location with everyone in the game</label>` : '<p class="note">As hider, your location is never shared.</p>'}</div>`;
+  const th = LS.get('seek-theme', 'system');
+  h += `<div class="grp"><h2>Appearance</h2><div class="seg">${[['system', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button type="button" data-act="theme" data-v="${v}" class="${th === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <p class="note">Automatic follows your phone's setting. Only affects this phone.</p></div>`;
   h += `<div class="grp"><h2>Rules for this game</h2>
     <label class="field"><span>Hiding time (minutes)</span><input id="g-hide" type="number" min="0" max="240" step="5" value="${m.hideMin ?? CFG.defaults.hideMin}" ${lock ? 'disabled' : ''}></label>
     <div class="row"><label class="field grow"><span>Answer time (min)</span><input id="g-ans" type="number" min="1" max="60" step="1" value="${m.ansMin ?? CFG.defaults.ansMin}" ${lock ? 'disabled' : ''}></label>
@@ -1141,6 +1164,7 @@ function act(el) {
     case 'pause-yes': S.ui.confirm = null; if (!paused()) { W.set('meta/pausedBy', S.name || 'a player'); W.set('meta/pausedAt', B.now()); } break;
     case 'resume': { const m = S.game.meta || {}; if (m.pausedAt) { W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } break; }
     case 'notif-on': if ('Notification' in window) Notification.requestPermission().then(() => render()); break;
+    case 'theme': LS.set('seek-theme', v); applyTheme(v); render(); break;
     case 'sound': S.ui.sound = el.checked; LS.set('seek-sound', el.checked); break;
     case 'wake': S.ui.wake = el.checked; LS.set('seek-wake', el.checked); wake(); break;
     case 'test-alert': alertUser('Test alert', 'This is how questions and answers will arrive.', 'test'); break;
@@ -1203,7 +1227,7 @@ function onGame(g) {
   if (listsChanged) { buildLists(); FC.clear(); QC.clear(); drawCats(); }
   if (S.role === 'hider' && S.game.meta?.round !== prevRound) { S.hider = LS.get(roundKey(), null); }
   if (S.role === 'hider' && (S.game.locs || {})[S.uid]) W.set('locs/' + S.uid, null); // clean up pings from before switching role
-  drawSeekers();
+  drawSeekers(); updateSeekerBtn();
   notify();
   if (listsChanged || metaChanged || qsChanged || !STATE) { evaluate(); renderMask(); drawStops(); drawQs(); drawHider(); }
   if (S.ui.tab === 'ask' && S.role === 'seeker') { if (ensurePins()) drawDraft(); if (qsChanged || listsChanged || metaChanged) { S.preview = null; } runPreview(); }

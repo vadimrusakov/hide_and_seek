@@ -210,3 +210,7 @@ label.check input{width:18px;height:18px;accent-color:var(--madder);margin:0;fle
 .iconbtn.eye.off{color:var(--muted);border-color:var(--line)}
 .card.qoff{opacity:.7}
 .mlabel{display:inline-block;transform:translate(-50%,-150%);max-width:min(75vw,360px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.sk-btn{margin-top:6px;color:#e8590c}
+.sk-btn.none{color:var(--muted)}
+.leaflet-touch .loc-btn{width:36px;height:36px}
