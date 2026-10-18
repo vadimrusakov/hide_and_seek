@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-17.5';
+const APP_VERSION = '2026-10-17.6';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const LS = {
@@ -413,7 +413,7 @@ function previewDraft(q) {
   });
   return out;
 }
-const answeredQs = () => Object.entries(S.game.qs || {}).map(([id, q]) => Object.assign({ id }, q)).filter(q => q.a && QT[q.type] && isDeduce(q)).sort((a, b) => (a.t || 0) - (b.t || 0));
+const answeredQs = () => Object.entries(S.game.qs || {}).map(([id, q]) => Object.assign({ id }, q)).filter(q => q.a && QT[q.type] && isDeduce(q) && !q.off).sort((a, b) => (a.t || 0) - (b.t || 0));
 const allQs = () => Object.entries(S.game.qs || {}).map(([id, q]) => Object.assign({ id }, q)).filter(q => QT[q.type]).sort((a, b) => (b.t || 0) - (a.t || 0));
 
 /* ------------------------------------------------------------------ map */
@@ -440,7 +440,7 @@ function initMap() {
   new MutationObserver(themeChanged).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 function isDark() { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
-function themeChanged() { setBase(true); drawZones(); drawCats(); drawStops(); drawQs(); renderMask(); }
+function themeChanged() { if (meCircle) meCircle.setStyle({ color: css('--me'), fillColor: css('--me') }); setBase(true); drawZones(); drawCats(); drawStops(); drawQs(); renderMask(); }
 function setBase(force) {
   const want = S.ui.layers.base;
   map.getContainer().classList.toggle('tiles-dark', isDark());
@@ -538,7 +538,7 @@ function drawQs() {
   layers.qs.clearLayers();
   allQs().forEach(q => {
     if (!isDeduce(q)) return;
-    const p = q.p || {}, col = !q.a ? css('--wait') : QT[q.type].ans[0] === q.a ? css('--yes') : css('--no');
+    const p = q.p || {}, col = q.off ? css('--muted') : !q.a ? css('--wait') : QT[q.type].ans[0] === q.a ? css('--yes') : css('--no');
     const tip = `<b>${QT[q.type].label}</b> · ${esc(q.by || '')}<br>${esc(qText(q))}<br>${q.a ? '<b>' + QT[q.type].names[q.a] + '</b>' : 'Waiting for answer'}`;
     if (q.type === 'thermo') {
       L.polyline([[p.la1, p.lo1], [p.la2, p.lo2]], { color: col, weight: 3, dashArray: '6 5' }).addTo(layers.qs);
@@ -580,15 +580,29 @@ function startGPS() {
   watchId = navigator.geolocation.watchPosition(p => {
     S.me = { la: p.coords.latitude, lo: p.coords.longitude, acc: Math.round(p.coords.accuracy), t: Date.now() };
     drawMe(); if (S.wantCenter) { S.wantCenter = false; map.flyTo([S.me.la, S.me.lo], Math.max(map.getZoom(), 15), { duration: .5 }); }
-    hiderZoneCheck(); pushLoc(); refreshLight();
+    hiderZoneCheck(); pushLoc(); followPin(); refreshLight();
   }, e => { if (e.code === 1) { toast('Location is blocked. Allow it for this site in your browser settings.'); navigator.geolocation.clearWatch(watchId); watchId = null; } },
   { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
   $('#locbtn') && $('#locbtn').classList.add('on');
 }
+let meCircle = null, meDot = null, meR = null;
 function drawMe() {
-  layers.me.clearLayers(); if (!S.me) return;
-  L.circle([S.me.la, S.me.lo], { radius: S.me.acc, color: css('--me'), weight: 1, fillColor: css('--me'), fillOpacity: .12, interactive: false }).addTo(layers.me);
-  L.marker([S.me.la, S.me.lo], { icon: L.divIcon({ className: '', html: '<div class="me"></div>', iconSize: [0, 0] }), interactive: false, zIndexOffset: 1000 }).addTo(layers.me);
+  if (!S.me) return;
+  const ll = [S.me.la, S.me.lo];
+  if (!meCircle) {
+    meR = L.svg({ padding: 0.5 });
+    meCircle = L.circle(ll, { renderer: meR, radius: S.me.acc, color: css('--me'), weight: 1, fillColor: css('--me'), fillOpacity: .12, interactive: false }).addTo(layers.me);
+    meDot = L.marker(ll, { icon: L.divIcon({ className: '', html: '<div class="me"></div>', iconSize: [0, 0] }), interactive: false, keyboard: false, zIndexOffset: 1000 }).addTo(layers.me);
+  } else { meCircle.setLatLng(ll); meCircle.setRadius(S.me.acc); meDot.setLatLng(ll); }
+}
+let lastFollow = null;
+function followPin() { // keep the live preview pin on the seeker while they travel
+  const a = S.ui.ask;
+  if (S.role !== 'seeker' || S.ui.tab !== 'ask' || a.type === 'photo' || a.follow === false || !S.me) return;
+  const i = a.type === 'thermo' ? 1 : 0, t = Date.now();
+  if (lastFollow && t - lastFollow.t < 5000 && dm(lastFollow.la, lastFollow.lo, S.me.la, S.me.lo) < 25) return;
+  lastFollow = { t, la: S.me.la, lo: S.me.lo };
+  a.pins[i] = [S.me.la, S.me.lo]; drawDraft(); runPreview();
 }
 let lastPush = null;
 function pushLoc() {
@@ -789,15 +803,13 @@ PANES.ask = () => {
       h += `<div class="row"><span class="grow"><b>${nm}</b>${act ? ' <span class="badge">moves on tap</span>' : ''}<br><span class="small muted mono">${p ? p[0].toFixed(5) + ', ' + p[1].toFixed(5) : 'not placed'}</span></span>
         <button type="button" class="btn small" data-act="pin-gps" data-i="${i}">My location</button>${pinNames.length > 1 ? `<button type="button" class="btn small${act ? ' primary' : ''}" data-act="pin-tap" data-i="${i}">Move on tap</button>` : ''}</div>`;
     });
-    const li = t === 'thermo' ? 1 : 0, lp = a.pins[li];
-    const off = lp && S.me ? dm(lp[0], lp[1], S.me.la, S.me.lo) : null;
-    h += `<p class="note">Tap anywhere on the map to move ${pinNames.length > 1 ? 'the selected pin' : 'the pin'}, as often as you like, or drag it. This is only a preview: <b>sending uses your live GPS position</b>${t === 'thermo' ? ' for “Where you are now”' : ''}.</p>
-      ${S.ui.snapped ? '<p class="small"><b>Pin moved to your current location.</b> Check the preview below, then send.</p>' : off != null && off > 30 ? `<p class="small warn">The ${t === 'thermo' ? '“now” ' : ''}pin is ${fmtD(off)} from you. Sending will move it to where you are.</p>` : !S.me ? '<p class="small warn">Location is off. Turn it on to send questions.</p>' : ''}</div>`;
+    h += `<p class="note">Tap the map to preview from anywhere. <b>Send always uses your GPS position at that moment</b>${t === 'thermo' ? ' for “Where you are now”' : ''}. ${a.follow !== false ? 'The pin is following you.' : '<button type="button" class="linkbtn" data-act="pin-follow">Follow me again</button>'}</p>
+      ${!S.me ? '<p class="small warn">Location is off. Turn it on to send questions.</p>' : ''}</div>`;
   }
   const q = draftQ();
   if (q && q.err) h += `<p class="warn">${esc(q.err)}</p>`;
   else if (q) {
-    h += `<div class="card"><div class="qhead"><b>${QT[t].label}</b>${cardChip(q)}</div><div class="qtext">${esc(qText(q))}</div>${qRef(q) ? `<div class="small muted">${esc(qRef(q))}</div>` : ''}`;
+    h += `<div class="card"><div class="qhead"><b>${QT[t].label}</b>${cardChip(q)}</div><div class="qtext">${esc(qText(q))}</div>`;
     if (t === 'photo') {}
     else if (S.preview && S.preview.key === previewKey(q)) {
       const pv = S.preview.r, A = QT[t].ans;
@@ -814,16 +826,21 @@ PANES.log = () => {
   let h = summaryHTML();
   const qs = allQs();
   if (!qs.length) return h + `<p class="muted">No questions yet. Ask one from the Ask tab; it appears here and on the hider's phone.</p>`;
-  h += `<div class="grp"><h2>Questions (${qs.length})</h2>`;
+  const shaded = qs.filter(q => q.a && isDeduce(q) && !q.off).length, hidden = qs.filter(q => q.a && isDeduce(q) && q.off).length;
+  h += `<div class="grp"><h2>Questions (${qs.length})</h2>
+    <p class="note">The eye on each answer turns its shading on or off for the whole team, e.g. after the hider plays a Move card.</p>
+    ${S.ui.confirm === 'move' ? `<div class="confirm"><span class="grow">Hide the shading of all ${shaded} answered questions? Use this when the hider has moved to a new zone.</span><button type="button" class="btn small primary" data-act="move-yes">Hide all</button><button type="button" class="btn small" data-act="confirm-no">Cancel</button></div>`
+      : `<div class="row">${shaded ? '<button type="button" class="btn small" data-act="move">Move card: hide all shading…</button>' : ''}${hidden ? '<button type="button" class="btn small ghost" data-act="unhide-all">Show all shading</button>' : ''}</div>`}`;
   qs.forEach(q => {
     const pend = !q.a;
     const late = !!(q.late || (q.a && qLate(q)));
-    h += `<div class="card${pend ? ' pending' : ''}"><div class="qhead"><span><b>${QT[q.type].label}</b> ${cardChip(q, late)} <span class="small muted">· ${esc(q.by || '?')} · ${ago(q.t)}</span></span>
+    h += `<div class="card${pend ? ' pending' : ''}${q.off ? ' qoff' : ''}"><div class="qhead"><span><b>${QT[q.type].label}</b> ${cardChip(q, late)} <span class="small muted">· ${esc(q.by || '?')} · ${ago(q.t)}</span></span>
       ${pend ? '<span class="badge wait">Waiting</span>' : `<span class="badge ${QT[q.type].ans[0] === q.a ? 'yes' : 'no'}">${QT[q.type].names[q.a]}</span>`}</div>
       ${pend ? `<div class="small">Answer due: <span class="due mono" data-due="${q.id}"></span></div>` : q.late || qLate(q) ? '<div class="small warn">Answered late: no card draw</div>' : ''}
       <div>${esc(qText(q))}</div>${qRef(q) ? `<div class="small muted">${esc(qRef(q))}</div>` : ''}
+      ${q.off ? '<div class="small muted"><b>Shading hidden</b> for everyone. It no longer rules anything out.</div>' : ''}
       ${S.ui.confirm === 'del-' + q.id ? `<div class="confirm"><span class="grow">Delete this question for everyone?</span><button type="button" class="btn small primary" data-act="q-del-yes" data-id="${q.id}">Delete</button><button type="button" class="btn small" data-act="confirm-no">Cancel</button></div>`
-      : `<div class="row">${isDeduce(q) ? `<button type="button" class="btn small" data-act="q-show" data-id="${q.id}">Show on map</button>` : ''}<button type="button" class="btn small ghost" data-act="q-del" data-id="${q.id}">Delete</button></div>`}</div>`;
+      : `<div class="row">${isDeduce(q) && q.a ? `<button type="button" class="iconbtn eye${q.off ? ' off' : ''}" data-act="q-eye" data-id="${q.id}" title="${q.off ? 'Shading hidden. Tap to use it again' : 'Shading in use. Tap to hide it'}" aria-label="${q.off ? 'Show this question’s shading' : 'Hide this question’s shading'}" aria-pressed="${!q.off}">${q.off ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.3 6.3C3.6 8.1 2 12 2 12s3.5 7 10 7c1.8 0 3.4-.5 4.7-1.3"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>' : '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>'}</button>` : ''}${isDeduce(q) ? `<button type="button" class="btn small" data-act="q-show" data-id="${q.id}">Show on map</button>` : ''}<button type="button" class="btn small ghost" data-act="q-del" data-id="${q.id}">Delete</button></div>`}</div>`;
   });
   return h + '</div>';
 };
@@ -1008,12 +1025,21 @@ function drawDraft() {
     if (!p) return;
     const m = L.marker(p, { icon: PIN(css('--madder')), draggable: true, autoPan: true }).addTo(layers.draft);
     m.on('drag', e => { a.pins[i] = [e.latlng.lat, e.latlng.lng]; if (a.type === 'radar' && layers.draftCircle) layers.draftCircle.setLatLng(e.latlng); });
-    m.on('dragend', () => { drawDraft(); render(); runPreview(); });
+    m.on('dragend', () => { if (i === (a.type === 'thermo' ? 1 : 0)) a.follow = false; drawDraft(); render(); runPreview(); });
   });
   if (a.type === 'radar' && a.pins[0]) layers.draftCircle = L.circle(a.pins[0], { radius: a.r, color: css('--madder'), weight: 2, dashArray: '6 5', fill: false, interactive: false }).addTo(layers.draft);
   if (a.type === 'thermo' && a.pins[0] && a.pins[1]) L.polyline(a.pins, { color: css('--madder'), weight: 2, dashArray: '6 5', interactive: false }).addTo(layers.draft);
   const q = draftQ();
-  if (q && !q.err && q.p.refLa) L.polyline([[q.p.la, q.p.lo], [q.p.refLa, q.p.refLo]], { color: css('--madder'), weight: 2, dashArray: '2 5', interactive: false }).addTo(layers.draft);
+  const label = (ll, txt) => L.marker(ll, { icon: L.divIcon({ className: '', html: `<span class="mlabel">${esc(txt)}</span>`, iconSize: null }), interactive: false, zIndexOffset: 800 }).addTo(layers.draft);
+  if (q && !q.err && q.p.refLa) {
+    L.polyline([[q.p.la, q.p.lo], [q.p.refLa, q.p.refLo]], { color: css('--madder'), weight: 2, dashArray: '2 5', interactive: false }).addTo(layers.draft);
+    L.circleMarker([q.p.refLa, q.p.refLo], { radius: 6, color: '#fff', weight: 2, fillColor: css('--madder'), fillOpacity: 1, interactive: false }).addTo(layers.draft);
+    const d = dm(q.p.la, q.p.lo, q.p.refLa, q.p.refLo);
+    label([q.p.refLa, q.p.refLo], q.type === 'measure' ? `${q.p.refName} · ${fmtD(q.p.ref)}` : `${q.p.refName}${d > 1 ? ' · ' + fmtD(d) : ''}`);
+  } else if (q && !q.err && q.type === 'measure' && q.p.cat === 'coast') label([q.p.la, q.p.lo], `Coast · ${fmtD(q.p.ref)}`);
+  if (a.type === 'radar' && a.pins[0]) label([a.pins[0][0] + a.r / 110574, a.pins[0][1]], 'radius ' + fmtD(a.r));
+  if (a.type === 'thermo' && a.pins[0] && a.pins[1]) label([(a.pins[0][0] + a.pins[1][0]) / 2, (a.pins[0][1] + a.pins[1][1]) / 2], 'moved ' + fmtD(dm(a.pins[0][0], a.pins[0][1], a.pins[1][0], a.pins[1][1])));
+  if (q && q.err) label(a.pins[a.type === 'thermo' ? 1 : 0] || map.getCenter(), q.err.length > 60 ? q.err.slice(0, 58) + '…' : q.err);
 }
 function drawHider() {
   layers.hider.clearLayers();
@@ -1032,7 +1058,8 @@ function onMapClick(e) {
   const consumed = () => setTimeout(() => map.closePopup(), 0);
   if (mapMode || S.ui.tool.mode || (S.role === 'seeker' && S.ui.tab === 'ask' && S.ui.ask.type !== 'photo')) consumed();
   if (!mapMode && !S.ui.tool.mode && S.role === 'seeker' && S.ui.tab === 'ask' && S.ui.ask.type !== 'photo') {
-    S.ui.ask.pins[S.ui.ask.type === 'thermo' ? (S.ui.ask.active ?? 1) : 0] = ll; S.ui.snapped = false; drawDraft(); render(); runPreview();
+    const pi = S.ui.ask.type === 'thermo' ? (S.ui.ask.active ?? 1) : 0;
+    S.ui.ask.pins[pi] = ll; if (pi === (S.ui.ask.type === 'thermo' ? 1 : 0)) S.ui.ask.follow = false; drawDraft(); render(); runPreview();
     return;
   }
   if (mapMode === 'addplace') { S.ui.list.adding = { la: ll[0], lo: ll[1] }; setMode(null); setTimeout(() => L.popup().setLatLng(ll).setContent('New place here').openOn(map), 10); render(); setTimeout(() => $('#ls-addname') && $('#ls-addname').focus(), 50); return; }
@@ -1055,29 +1082,30 @@ function act(el) {
     case 'ask-subj': A.subj = v; render(); break;
     case 'ask-td': A.td = +v; S.preview = null; drawDraft(); render(); runPreview(); break;
     case 'ask-r': A.r = +v; S.preview = null; drawDraft(); render(); runPreview(); break;
-    case 'pin-gps': startGPS(); if (S.me) { A.pins[+el.dataset.i] = [S.me.la, S.me.lo]; drawDraft(); render(); runPreview(); } else toast('Waiting for your location… try again in a moment.'); break;
+    case 'pin-gps': startGPS(); if (S.me) { A.pins[+el.dataset.i] = [S.me.la, S.me.lo]; if (+el.dataset.i === (A.type === 'thermo' ? 1 : 0)) A.follow = true; drawDraft(); render(); runPreview(); } else toast('Waiting for your location… try again in a moment.'); break;
+    case 'pin-follow': A.follow = true; if (S.me) { A.pins[A.type === 'thermo' ? 1 : 0] = [S.me.la, S.me.lo]; drawDraft(); render(); runPreview(); } break;
     case 'pin-tap': A.active = +el.dataset.i; render(); hint('Tap the map to move this pin.'); setTimeout(() => { if (!mapMode) hint(null); }, 2500); break;
     case 'ask-send': {
       if (phase() !== 'seeking' || paused()) { toast(paused() ? 'The game is paused.' : 'Questions open when hiding time ends.'); return; }
       if (A.type !== 'photo') {
-        // questions are always sent from the seeker's real position, never from a preview pin
-        if (!S.me || Date.now() - S.me.t > 60000) { startGPS(); toast('Waiting for your live location. Questions are sent from where you actually are.', 5000); return; }
-        const i = A.type === 'thermo' ? 1 : 0, p = A.pins[i];
-        if (!p || dm(p[0], p[1], S.me.la, S.me.lo) > 30) {
-          A.pins[i] = [S.me.la, S.me.lo]; if (A.type === 'thermo') A.active = 0; S.ui.snapped = true; S.preview = null; drawDraft(); render(); runPreview();
-          toast('Pin moved to where you are now. Check the new preview, then press Send again.', 6000); return;
-        }
+        // questions are sent from the seeker's GPS position at the moment Send is pressed, never from a preview pin
+        if (!S.me) { startGPS(); toast('Waiting for your location. Turn location on to send questions.', 5000); return; }
+        A.pins[A.type === 'thermo' ? 1 : 0] = [S.me.la, S.me.lo];
       }
-      const q = draftQ(); if (!q || q.err) return;
+      const q = draftQ(); if (!q || q.err) { if (q && q.err) toast(q.err, 6000); drawDraft(); render(); return; }
       if (q.type !== 'photo') q.p.acc = S.me.acc;
       W.push('qs', Object.assign(q, { by: S.name || 'Seeker', uid: S.uid, t: B.now(), pt: S.game.meta?.pausedTotal || 0 }));
-      S.preview = null; S.previewMask = null; A.pins = []; S.ui.snapped = false; S.ui.tab = 'log'; drawDraft(); toast('Question sent.'); render(); renderMask(); break;
+      S.preview = null; S.previewMask = null; A.pins = []; A.follow = true; S.ui.tab = 'log'; drawDraft(); toast('Question sent.'); render(); renderMask(); break;
     }
     case 'q-show': { const q = allQs().find(x => x.id === id); if (!q || !isDeduce(q)) return; const p = q.p;
       const pts = q.type === 'thermo' ? [[p.la1, p.lo1], [p.la2, p.lo2]] : [[p.la, p.lo]].concat(p.refLa ? [[p.refLa, p.refLo]] : []);
       const b = L.latLngBounds(pts); if (q.type === 'radar') b.extend(L.latLng(p.la, p.lo).toBounds(2 * p.r));
       map.flyToBounds(b.pad(0.2), { maxZoom: 16, duration: .5 }); break; }
     case 'q-del': S.ui.confirm = 'del-' + id; render(); break;
+    case 'q-eye': { const q = (S.game.qs || {})[id]; if (q) W.set('qs/' + id + '/off', q.off ? null : true); break; }
+    case 'move': S.ui.confirm = 'move'; render(); break;
+    case 'move-yes': S.ui.confirm = null; allQs().forEach(q => { if (q.a && isDeduce(q) && !q.off) W.set('qs/' + q.id + '/off', true); }); toast('All earlier shading hidden.'); break;
+    case 'unhide-all': allQs().forEach(q => { if (q.off) W.set('qs/' + q.id + '/off', null); }); break;
     case 'q-del-yes': W.set('qs/' + id, null); S.ui.confirm = null; break;
     case 'confirm-no': S.ui.confirm = null; render(); break;
     case 'answer': {
