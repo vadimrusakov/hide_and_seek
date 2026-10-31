@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-31.1';
+const APP_VERSION = '2026-10-31.2';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -1023,7 +1023,7 @@ PANES.map = () => {
   h += `<div class="grp"><h2>Tools</h2><p class="note">Only on this phone. Not shared.</p>
     <div class="row"><button type="button" class="btn small${T.mode === 'measure' ? ' primary' : ''}" data-act="tool" data-v="measure">Measure distance</button><button type="button" class="btn small${T.mode === 'circle' ? ' primary' : ''}" data-act="tool" data-v="circle">Draw circle</button><button type="button" class="btn small ghost" data-act="tool-clear">Clear</button></div>
     ${T.mode === 'circle' ? `<div class="chips">${[500, 1000, 2000, 5000].map(r => `<button type="button" class="chipbtn${T.r === r ? ' on' : ''}" data-act="tool-r" data-v="${r}">${r < 1000 ? r + ' m' : r / 1000 + ' km'}</button>`).join('')}</div>` : ''}</div>`;
-  return S.role === 'hider' ? h + layersHTML : layersHTML + h;
+  return h + layersHTML;
 };
 PANES.lists = () => {
   const U = S.ui.list, cid = U.cid;
@@ -1321,7 +1321,7 @@ document.addEventListener('change', e => {
   if (t.id === 'ask-cat') { S.ui.ask.cat = t.value; S.preview = null; drawDraft(); render(); runPreview(); }
   if (t.id === 'ask-rc') { const v = parseFloat(t.value); if (v > 0) { S.ui.ask.r = Math.round(v * 1000); S.preview = null; drawDraft(); render(); runPreview(); } }
   if (t.id === 'ls-cid') { S.ui.list.cid = t.value; S.ui.list.q = ''; S.ui.list.edit = null; S.ui.list.adding = null; render(); }
-  if (t.id === 'g-name') { S.name = t.value.trim().slice(0, 24); LS.set('seek-name', S.name); registerPlayer(); }
+  if (t.id === 'g-name') { const v = t.value.trim().slice(0, 24); if (!v) { t.value = S.name; toast('Your name can’t be empty.'); return; } S.name = v; LS.set('seek-name', S.name); registerPlayer(); }
   if (t.id === 'g-ans' || t.id === 'g-photo') { const v = Math.round(+t.value); if (!started() && v >= 1 && v <= 60) W.set('meta/' + (t.id === 'g-ans' ? 'ansMin' : 'photoMin'), v); }
   if (t.id === 'g-hide') { const v = Math.round(+t.value); if (!started() && v >= 0 && v <= 240) W.set('meta/hideMin', v); }
   if (t.id === 'g-radius') { if (started()) return; const v = Math.round(+t.value); if (v >= 100 && v <= 3000) W.set('meta/radius', v); else toast('Use a radius between 100 and 3000 m.'); }
@@ -1417,7 +1417,14 @@ function lobby() {
   $('#lb-role').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setRole(b.dataset.v); });
   const g = new URLSearchParams(location.search).get('g'); if (g) $('#lb-code').value = g.toUpperCase();
   const name = () => { S.name = $('#lb-name').value.trim().slice(0, 24); LS.set('seek-name', S.name); };
-  const go = (fn) => async () => { name(); document.querySelectorAll('.lobby button').forEach(b => b.disabled = true); try { await fn(); } catch (e) { lbMsg(e.message || String(e), true); } finally { document.querySelectorAll('.lobby button').forEach(b => b.disabled = false); } };
+  const nameOk = () => {
+    const el = $('#lb-name'), ok = !!S.name;
+    el.classList.toggle('bad', !ok); el.setAttribute('aria-invalid', ok ? 'false' : 'true');
+    if (!ok) { lbMsg('Enter your name first. Other players see it next to your questions and answers.', true); el.focus(); }
+    return ok;
+  };
+  $('#lb-name').addEventListener('input', () => { if ($('#lb-name').value.trim()) { $('#lb-name').classList.remove('bad'); if ($('#lb-msg').classList.contains('err')) lbMsg(''); } });
+  const go = (fn) => async () => { name(); if (!nameOk()) return; document.querySelectorAll('.lobby button').forEach(b => b.disabled = true); try { await fn(); } catch (e) { lbMsg(e.message || String(e), true); } finally { document.querySelectorAll('.lobby button').forEach(b => b.disabled = false); } };
   $('#lb-create').addEventListener('click', go(() => enter('fb', newCode(), role, true, $('#lb-region').value)));
   $('#lb-join').addEventListener('click', go(() => { const c = $('#lb-code').value.trim().toUpperCase(); if (!/^[A-Z2-9]{5}$/.test(c)) throw new Error('Game codes have 5 letters or digits.'); return enter('fb', c, role, false); }));
   $('#lb-local').addEventListener('click', go(async () => { await LOCAL.init(); const last = LOCAL.prepare(); const ex = await LOCAL.exists(last); return enter('local', last, role, !ex, $('#lb-region').value); }));
