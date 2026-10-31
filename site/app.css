@@ -220,3 +220,8 @@ label.check input{width:18px;height:18px;accent-color:var(--madder);margin:0;fle
 code.topic{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:6px 8px;font-size:12.5px;user-select:all;overflow-wrap:anywhere;flex:1;min-width:0}
 
 input.bad{border-color:var(--excl);outline:2px solid var(--excl);outline-offset:1px}
+
+button.oc{background:none;text-align:left;cursor:pointer;color:inherit;font:inherit}
+button.oc.sel{box-shadow:0 0 0 2px currentColor inset}
+.oc.yes.sel{background:color-mix(in srgb,var(--yes) 14%,transparent)}
+.oc.no.sel{background:color-mix(in srgb,var(--no) 14%,transparent)}

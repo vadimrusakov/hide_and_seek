@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-31.2';
+const APP_VERSION = '2026-10-31.3';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -459,9 +459,9 @@ function previewDraft(q) {
   A.forEach(ans => {
     const c = consMask(q, ans); for (let k = 0; k < G.N; k++) c[k] &= base[k];
     const okq = stopsTouching(c, STATE.stops), ok = STATE.ok.map((v, i) => v & okq[i]);
-    const u = discUnion(STATE.stops, ok, base); let a = 0;
-    for (let k = 0; k < G.N; k++) if (u[k]) a++;
-    out[ans] = { n: ok.reduce((x, y) => x + y, 0), area: a * G.cell ** 2, c };
+    const u = discUnion(STATE.stops, ok, base), st = new Uint8Array(G.N); let a = 0, b = 0;
+    for (let k = 0; k < G.N; k++) { st[k] = STATE.still[k] & c[k]; if (u[k]) { a++; if (st[k]) b++; } }
+    out[ans] = { n: ok.reduce((x, y) => x + y, 0), area: a * G.cell ** 2, stillArea: b * G.cell ** 2, c, u, st };
   });
   return out;
 }
@@ -609,6 +609,7 @@ function drawQs() {
   });
 }
 function renderMask(prev) {
+  if (prev === undefined) prev = S.role === 'seeker' && S.ui.tab === 'ask' ? S.previewMask : null;
   if (!STATE || !S.ui.layers.mask) { if (maskOverlay) { map.removeLayer(maskOverlay); maskOverlay = null; } return; }
   const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
   const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
@@ -618,10 +619,14 @@ function renderMask(prev) {
   // grey drawn over the green/purple tint where the area is already ruled out if the hider hasn't moved
   const over = (top, bot) => { const ta = top[3] / 255, ba = bot[3] / 255, a = ta + ba * (1 - ta); return [0, 1, 2].map(i => Math.round((top[i] * ta + bot[i] * ba * (1 - ta)) / a)).concat(Math.round(a * 255)); };
   const greyOn = dark ? [0, 0, 0, 120] : [30, 32, 38, 90], Ys = over(greyOn, Y), Ns = over(greyOn, Nn);
+  // one-answer view: tint = still possible; pale tinted grey = possible only if the hider has moved; dark = ruled out
+  const one = prev && !prev.both, P = prev && prev.both, oc = one ? (prev.i ? Nn : Y) : null;
+  const paleOne = one ? over(dark ? [20, 22, 26, 140] : [120, 124, 132, 120], [oc[0], oc[1], oc[2], 60]) : null;
   for (let k = 0, j = 0; k < G.N; k++, j += 4) {
     let px = null;
-    if (!U[k]) px = out;
-    else if (prev) px = show && !St[k] ? (prev[k] ? Ys : Ns) : (prev[k] ? Y : Nn);
+    if (one) { if (!prev.u[k]) px = out; else if (show && !prev.st[k]) px = paleOne; else px = oc; }
+    else if (!U[k]) px = out;
+    else if (P) px = show && !St[k] ? (P[k] ? Ys : Ns) : (P[k] ? Y : Nn);
     else if (show && !St[k]) px = soft;
     if (px) { d[j] = px[0]; d[j + 1] = px[1]; d[j + 2] = px[2]; d[j + 3] = px[3]; }
   }
@@ -931,8 +936,11 @@ PANES.ask = () => {
     if (t === 'photo') {}
     else if (S.preview && S.preview.key === previewKey(q)) {
       const pv = S.preview.r, A = QT[t].ans;
-      h += `<div class="outcome">${A.map((ans, i) => `<div class="oc ${i ? 'no' : 'yes'}"><b>If ${QT[t].names[ans]}</b><div class="mono">${nf(pv[ans].n)} stops</div><div class="mono">${fmtA(pv[ans].area)}</div></div>`).join('')}</div>
-        <p class="note">Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}.</p>`;
+      const vi = S.ui.pv ?? -1;
+      h += `<div class="field"><span>Preview on the map</span><div class="seg">${[[-1, 'Both']].concat(A.map((ans, i) => [i, 'If ' + QT[t].names[ans].toLowerCase()])).map(([v, l]) => `<button type="button" data-act="pv" data-v="${v}" class="${vi === v ? 'on' : ''}" aria-pressed="${vi === v}">${l}</button>`).join('')}</div></div>
+      <div class="outcome">${A.map((ans, i) => `<button type="button" class="oc ${i ? 'no' : 'yes'}${vi === i ? ' sel' : ''}" data-act="pv" data-v="${i}"><b>If ${QT[t].names[ans]}</b><div class="mono">${nf(pv[ans].n)} stops</div><div class="mono">${fmtA(pv[ans].area)}</div>${pv[ans].stillArea < pv[ans].area - 1 ? `<div class="small muted">${fmtA(pv[ans].stillArea)} if not moved</div>` : ''}</button>`).join('')}</div>
+        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Greyed parts are possible only if the hider has moved.`
+          : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>pale ${vi ? 'purple' : 'green'}-grey</b> = only if they moved within their zone, <b>dark</b> = ruled out.`}</p>`;
     } else h += `<p class="note">Working out both outcomes…</p>`;
     const ph = phase();
     h += ph === 'seeking' && !paused() ? `<button type="button" class="btn primary wide" data-act="ask-send">Send question</button></div>`
@@ -1144,12 +1152,17 @@ function draftQ() {
   return q;
 }
 const previewKey = q => JSON.stringify(q) + S.sig + R() + (STATE ? STATE.n : '');
+function previewView() { // 'both' (-1) or the map exactly as it would look after answer 0 / 1
+  if (!S.preview) return null;
+  const A = QT[S.preview.type].ans, i = S.ui.pv ?? -1, r = S.preview.r;
+  return i < 0 ? { both: r[A[0]].c } : { i, u: r[A[i]].u, st: r[A[i]].st };
+}
 const runPreview = debounce(() => {
   const q = draftQ();
   if (!q || q.err || q.type === 'photo' || S.role !== 'seeker' || S.ui.tab !== 'ask') { S.preview = null; S.previewMask = null; renderMask(); return; }
   const key = previewKey(q); if (S.preview && S.preview.key === key) return;
   const r = previewDraft(q);
-  S.preview = { key, r }; S.previewMask = r[QT[q.type].ans[0]].c;
+  S.preview = { key, r, type: q.type }; S.previewMask = previewView();
   renderMask(S.previewMask); render();
 }, 250);
 function drawDraft() {
@@ -1216,6 +1229,7 @@ function act(el) {
     case 'ask-type': A.type = v; ensurePins(); S.preview = null; drawDraft(); render(); runPreview(); break;
     case 'ask-subj': A.subj = v; render(); break;
     case 'ask-td': A.td = +v; S.preview = null; drawDraft(); render(); runPreview(); break;
+    case 'pv': S.ui.pv = +v; S.previewMask = previewView(); renderMask(S.previewMask); render(); break;
     case 'ask-r': A.r = +v; S.preview = null; drawDraft(); render(); runPreview(); break;
     case 'pin-gps': startGPS(); if (S.me) { A.pins[+el.dataset.i] = [S.me.la, S.me.lo]; if (+el.dataset.i === (A.type === 'thermo' ? 1 : 0)) A.follow = true; drawDraft(); render(); runPreview(); } else toast('Waiting for your location… try again in a moment.'); break;
     case 'pin-follow': A.follow = true; if (S.me) { A.pins[A.type === 'thermo' ? 1 : 0] = [S.me.la, S.me.lo]; drawDraft(); render(); runPreview(); } break;
@@ -1254,7 +1268,7 @@ function act(el) {
     case 'zone-show': if (S.hider) map.flyTo([S.hider.la, S.hider.lo], 15, { duration: .5 }); break;
     case 'unlock': S.ui.confirm = 'unlock'; render(); break;
     case 'unlock-yes': saveZone(null); S.ui.confirm = null; drawHider(); render(); break;
-    case 'ly': S.ui.layers[el.dataset.k] = el.checked; saveLayers(); if (el.dataset.k === 'zones') drawZones(); else renderMask(S.ui.tab === 'ask' ? S.previewMask : null); break;
+    case 'ly': S.ui.layers[el.dataset.k] = el.checked; saveLayers(); if (el.dataset.k === 'zones') drawZones(); else renderMask(); break;
     case 'ly-stops': S.ui.layers.stops = v; saveLayers(); drawStops(); render(); break;
     case 'ly-cat': S.ui.layers.cats[el.dataset.k] = el.checked; saveLayers(); drawCats(); break;
     case 'ly-base': S.ui.layers.base = v; saveLayers(); setBase(); render(); break;
@@ -1309,7 +1323,7 @@ document.addEventListener('click', e => {
   if (tab) {
     const id = tab.dataset.tab;
     if (innerWidth <= 760 && id === S.ui.tab) S.ui.sheetMin = !S.ui.sheetMin; else { S.ui.tab = id; S.ui.sheetMin = false; }
-    S.ui.confirm = null; if (id === 'ask') ensurePins(); drawDraft(); render(); if (id === 'ask') runPreview(); else if (S.preview) { S.preview = null; renderMask(); }
+    S.ui.confirm = null; if (id === 'ask') ensurePins(); drawDraft(); render(); if (id === 'ask') runPreview(); else if (S.preview) { S.preview = null; S.previewMask = null; renderMask(null); }
     return;
   }
   if (e.target.closest('#tb-code')) { S.ui.tab = 'game'; S.ui.sheetMin = false; render(); }
