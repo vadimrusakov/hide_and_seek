@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-31.3';
+const APP_VERSION = '2026-10-31.4';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -614,14 +614,14 @@ function renderMask(prev) {
   const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
   const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
   const dark = isDark(), U = STATE.union, St = STATE.still, show = S.ui.layers.still;
-  const out = dark ? [0, 0, 0, 150] : [30, 32, 38, 120], soft = dark ? [0, 0, 0, 70] : [30, 32, 38, 48];
+  const out = dark ? [0, 0, 0, 165] : [30, 32, 38, 120], soft = dark ? [170, 176, 188, 60] : [30, 32, 38, 48]; // dark mode: light haze, clearly unlike 'ruled out'
   const Y = dark ? [76, 201, 133, 95] : [31, 138, 76, 80], Nn = dark ? [197, 138, 224, 95] : [139, 63, 168, 80];
   // grey drawn over the green/purple tint where the area is already ruled out if the hider hasn't moved
   const over = (top, bot) => { const ta = top[3] / 255, ba = bot[3] / 255, a = ta + ba * (1 - ta); return [0, 1, 2].map(i => Math.round((top[i] * ta + bot[i] * ba * (1 - ta)) / a)).concat(Math.round(a * 255)); };
   const greyOn = dark ? [0, 0, 0, 120] : [30, 32, 38, 90], Ys = over(greyOn, Y), Ns = over(greyOn, Nn);
   // one-answer view: tint = still possible; pale tinted grey = possible only if the hider has moved; dark = ruled out
   const one = prev && !prev.both, P = prev && prev.both, oc = one ? (prev.i ? Nn : Y) : null;
-  const paleOne = one ? over(dark ? [20, 22, 26, 140] : [120, 124, 132, 120], [oc[0], oc[1], oc[2], 60]) : null;
+  const paleOne = soft; // same light grey as the normal map: possible only if the hider moved
   for (let k = 0, j = 0; k < G.N; k++, j += 4) {
     let px = null;
     if (one) { if (!prev.u[k]) px = out; else if (show && !prev.st[k]) px = paleOne; else px = oc; }
@@ -939,8 +939,8 @@ PANES.ask = () => {
       const vi = S.ui.pv ?? -1;
       h += `<div class="field"><span>Preview on the map</span><div class="seg">${[[-1, 'Both']].concat(A.map((ans, i) => [i, 'If ' + QT[t].names[ans].toLowerCase()])).map(([v, l]) => `<button type="button" data-act="pv" data-v="${v}" class="${vi === v ? 'on' : ''}" aria-pressed="${vi === v}">${l}</button>`).join('')}</div></div>
       <div class="outcome">${A.map((ans, i) => `<button type="button" class="oc ${i ? 'no' : 'yes'}${vi === i ? ' sel' : ''}" data-act="pv" data-v="${i}"><b>If ${QT[t].names[ans]}</b><div class="mono">${nf(pv[ans].n)} stops</div><div class="mono">${fmtA(pv[ans].area)}</div>${pv[ans].stillArea < pv[ans].area - 1 ? `<div class="small muted">${fmtA(pv[ans].stillArea)} if not moved</div>` : ''}</button>`).join('')}</div>
-        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Greyed parts are possible only if the hider has moved.`
-          : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>pale ${vi ? 'purple' : 'green'}-grey</b> = only if they moved within their zone, <b>dark</b> = ruled out.`}</p>`;
+        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Choose “If ${QT[t].names[A[0]].toLowerCase()}” or “If ${QT[t].names[A[1]].toLowerCase()}” to also see the light-grey areas, where the hider could be only if they moved.`
+          : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>light grey</b> = only if they moved within their zone, <b>dark grey</b> = ruled out.${S.ui.layers.still ? '' : ' (Light grey is off in Map → Layers.)'}`}</p>`;
     } else h += `<p class="note">Working out both outcomes…</p>`;
     const ph = phase();
     h += ph === 'seeking' && !paused() ? `<button type="button" class="btn primary wide" data-act="ask-send">Send question</button></div>`
