@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-18.2';
+const APP_VERSION = '2026-10-31.1';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -68,7 +68,12 @@ const FB = {
   close() { if (this.r) this.r.off(); this.db && this.db.ref('.info/connected').off(); },
   set(code, p, v) { return this.ref(code, p).set(v).catch(e => toast('Could not save: ' + e.message)); },
   push(code, p, v) { const r = this.ref(code, p).push(); r.set(v).catch(e => toast('Could not save: ' + e.message)); return r.key; },
-  now() { return firebase.database.ServerValue.TIMESTAMP; }
+  now() { return firebase.database.ServerValue.TIMESTAMP; },
+  // The hiders' locked zone lives outside games/ so the database rules can hide it from seekers.
+  secretRef(code, round) { return this.db.ref('secrets/' + code + '/r' + round); },
+  watchSecret(code, round, cb, err) { this.unwatchSecret(); this.sr = this.secretRef(code, round); this.sr.on('value', s => cb(s.val()), err); },
+  unwatchSecret() { if (this.sr) { this.sr.off(); this.sr = null; } },
+  setSecret(code, round, v) { return this.secretRef(code, round).set(v); }
 };
 const LOCAL = {
   kind: 'local',
@@ -77,6 +82,13 @@ const LOCAL = {
     this.uid = u || ('local' + Math.random().toString(36).slice(2, 10));
     try { sessionStorage.setItem('seek-local-uid', this.uid); } catch (e) {}
     this.bc = 'BroadcastChannel' in window ? new BroadcastChannel('seek-local') : null;
+    if (!this.beating) {
+      this.beating = true; this.beat();
+      setInterval(() => { this.beat(); if (this.code) this.prune(this.code); }, 15000);
+      addEventListener('pagehide', () => LS.del(this.alive + this.uid));
+      addEventListener('pageshow', () => this.beat());
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) this.beat(); });
+    }
   },
   key(code) { return 'seek-local:' + code; },
   load(code) { return LS.get(this.key(code), null); },
@@ -85,13 +97,44 @@ const LOCAL = {
   open(code, cb) {
     this.code = code; this.cb = cb;
     const f = () => this.cb && this.cb(this.load(code) || {});
-    if (this.bc) this.bc.onmessage = e => { if (e.data === code) f(); };
+    if (this.bc) this.bc.onmessage = e => { if (e.data === code) f(); else if (e.data === 'secret' && this.scb) this.scb(); };
     f(); setConn(true);
   },
   close() { this.cb = null; },
   set(code, p, v) { const o = this.load(code) || {}; setPath(o, p, v); this.save(code, o); },
   push(code, p, v) { const k = Date.now().toString(36) + Math.random().toString(36).slice(2, 6); this.set(code, p + '/' + k, v); return k; },
-  now() { return Date.now(); }
+  now() { return Date.now(); },
+  skey(code, round) { return 'seek-local-secret:' + code + ':' + round; },
+  watchSecret(code, round, cb) { this.scb = () => cb(LS.get(this.skey(code, round), null)); this.sk = this.skey(code, round); this.scb(); },
+  unwatchSecret() { this.scb = null; this.sk = null; },
+  setSecret(code, round, v) { const k = this.skey(code, round); if (v) LS.set(k, v); else LS.del(k); this.bc && this.bc.postMessage('secret'); if (this.scb && this.sk === k) this.scb(); return Promise.resolve(); },
+  // ---- practice-mode housekeeping: forget players and dots from browser sessions that have ended
+  alive: 'seek-local-alive:',
+  beat() { LS.set(this.alive + this.uid, Date.now()); },
+  liveUids(maxAge) {
+    const out = [], t = Date.now();
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(this.alive)) { const ts = LS.get(k, 0); if (t - ts < maxAge) out.push(k.slice(this.alive.length)); else if (t - ts > 600000) LS.del(k); } } } catch (e) {}
+    return out;
+  },
+  prune(code) { // drop players and location dots of tabs that are gone
+    const o = this.load(code); if (!o) return;
+    const live = new Set(this.liveUids(120000)); live.add(this.uid);
+    let ch = false;
+    ['players', 'locs'].forEach(sec => Object.keys(o[sec] || {}).forEach(uid => { if (!live.has(uid)) { delete o[sec][uid]; ch = true; } }));
+    if (ch) this.save(code, o);
+  },
+  // Returns the practice game code to use. A new browser session with no other practice tab open starts from a clean slate.
+  prepare() {
+    let fresh = true; try { fresh = !sessionStorage.getItem('seek-local-session'); sessionStorage.setItem('seek-local-session', '1'); } catch (e) {}
+    const others = this.liveUids(30000).filter(u => u !== this.uid);
+    let code = LS.get('seek-local-code', null);
+    if (!code || (fresh && !others.length)) {
+      try { const ks = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && (k.startsWith('seek-local:') || k.startsWith('seek-local-secret:') || (code && (k.startsWith('seek-hider:' + code) || k === 'seek-late:' + code)))) ks.push(k); } ks.forEach(k => LS.del(k)); } catch (e) {}
+      code = Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+      LS.set('seek-local-code', code);
+    } else this.prune(code);
+    return code;
+  }
 };
 let B = null;
 const W = {
@@ -572,10 +615,13 @@ function renderMask(prev) {
   const dark = isDark(), U = STATE.union, St = STATE.still, show = S.ui.layers.still;
   const out = dark ? [0, 0, 0, 150] : [30, 32, 38, 120], soft = dark ? [0, 0, 0, 70] : [30, 32, 38, 48];
   const Y = dark ? [76, 201, 133, 95] : [31, 138, 76, 80], Nn = dark ? [197, 138, 224, 95] : [139, 63, 168, 80];
+  // grey drawn over the green/purple tint where the area is already ruled out if the hider hasn't moved
+  const over = (top, bot) => { const ta = top[3] / 255, ba = bot[3] / 255, a = ta + ba * (1 - ta); return [0, 1, 2].map(i => Math.round((top[i] * ta + bot[i] * ba * (1 - ta)) / a)).concat(Math.round(a * 255)); };
+  const greyOn = dark ? [0, 0, 0, 120] : [30, 32, 38, 90], Ys = over(greyOn, Y), Ns = over(greyOn, Nn);
   for (let k = 0, j = 0; k < G.N; k++, j += 4) {
     let px = null;
     if (!U[k]) px = out;
-    else if (prev) px = prev[k] ? Y : Nn;
+    else if (prev) px = show && !St[k] ? (prev[k] ? Ys : Ns) : (prev[k] ? Y : Nn);
     else if (show && !St[k]) px = soft;
     if (px) { d[j] = px[0]; d[j + 1] = px[1]; d[j + 2] = px[2]; d[j + 3] = px[3]; }
   }
@@ -632,12 +678,13 @@ function drawSeekers() {
     if (uid === S.uid || !l || !isFinite(l.la)) return;
     if ((S.game.players || {})[uid]?.role === 'hider') return; // never show a hider, even a stale ping
     const age = now() - (l.t || 0), stale = age > 5 * 60000;
+    if (age > 3 * 3600000) return; // left over from an earlier session
     L.marker([l.la, l.lo], { icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="sk${stale ? ' stale' : ''}"><i></i><span>${esc(l.name)}${stale ? ' · ' + ago(l.t) : ''}</span></div>` }), zIndexOffset: 900 })
       .bindPopup(`<b>${esc(l.name)}</b><br><span class="muted">Seeker · updated ${ago(l.t)} · ±${l.acc || '?'} m</span>`).addTo(layers.seekers);
   });
 }
 function seekerLocs() {
-  return Object.entries(S.game.locs || {}).filter(([uid, l]) => uid !== S.uid && l && isFinite(l.la) && (S.game.players || {})[uid]?.role !== 'hider').map(([, l]) => l);
+  return Object.entries(S.game.locs || {}).filter(([uid, l]) => uid !== S.uid && l && isFinite(l.la) && now() - (l.t || 0) < 3 * 3600000 && (S.game.players || {})[uid]?.role !== 'hider').map(([, l]) => l);
 }
 function showSeekers() {
   const ls = seekerLocs();
@@ -646,6 +693,31 @@ function showSeekers() {
   else map.flyToBounds(L.latLngBounds(ls.map(l => [l.la, l.lo])).pad(0.3), { maxZoom: 16, duration: .5 });
 }
 function updateSeekerBtn() { const b = $('#skbtn'); if (b) b.classList.toggle('none', !seekerLocs().length); }
+let zoneKey = null, zoneWarned = false;
+// Hiders share one locked zone per round. It is kept outside the game data, readable only by hiders (see database.rules.json).
+function syncZone(force) {
+  if (!B || !S.code) return;
+  if (S.role !== 'hider') { if (zoneKey) { B.unwatchSecret(); zoneKey = null; } return; }
+  const round = S.game.meta?.round || 0, key = S.code + ':' + round;
+  if (zoneKey === key && !force) return;
+  zoneKey = key;
+  B.watchSecret(S.code, round, v => {
+    const prev = S.hider;
+    S.hider = v && v.id ? v : null;
+    if (S.hider) LS.set(roundKey(), S.hider); else LS.del(roundKey());
+    if (S.hider && (!prev || prev.id !== S.hider.id) && S.hider.uid && S.hider.uid !== S.uid && !S.firstSync) toast(`${S.hider.by || 'Another hider'} locked the hiding zone: ${S.hider.n}.`, 6000);
+    if (!S.hider && prev && prev.uid !== S.uid) toast('The hiding zone was unlocked by another hider.', 5000);
+    if (!prev || !S.hider || prev.id !== S.hider.id) lastInside = null;
+    drawHider(); render();
+  }, () => {
+    zoneKey = null; S.hider = LS.get(roundKey(), null); drawHider(); render();
+    if (!zoneWarned) { zoneWarned = true; toast('The hiding zone can’t be shared with other hiders yet: the database rules need updating.', 8000); }
+  });
+}
+function saveZone(v) {
+  S.hider = v; if (v) LS.set(roundKey(), v); else LS.del(roundKey());
+  Promise.resolve(B.setSecret(S.code, S.game.meta?.round || 0, v)).catch(() => { if (!zoneWarned) { zoneWarned = true; toast('Saved on this phone only: the database rules need updating to share it with other hiders.', 8000); } });
+}
 let lastInside = null;
 function hiderZoneCheck() {
   if (S.role !== 'hider' || !S.hider || !S.me) return;
@@ -921,7 +993,8 @@ PANES.zone = () => {
       <dl class="kv"><dt>Locked</dt><dd>${new Date(S.hider.t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</dd><dt>Hiding radius</dt><dd>${fmtD(R())}</dd>
       <dt>You are</dt><dd>${d == null ? 'location off' : d <= R() ? fmtD(d) + ' from the stop · inside' : fmtD(d - R()) + ' outside your zone'}</dd></dl>
       ${d != null && d > R() ? '<p class="warn">Get back inside your zone.</p>' : ''}
-      <p class="note">Your stop stays on this phone. Seekers never see it.</p>
+      ${S.hider.by ? `<p class="small">Locked by <b>${esc(S.hider.uid === S.uid ? 'you' : S.hider.by)}</b>.</p>` : ''}
+      <p class="note">Shared with the hider team only, including hiders who join later. Seekers never see it.</p>
       ${S.ui.confirm === 'unlock' ? `<div class="confirm"><span class="grow">Unlock only if your rules allow changing stop.</span><button type="button" class="btn small primary" data-act="unlock-yes">Unlock</button><button type="button" class="btn small" data-act="confirm-no">Cancel</button></div>`
         : `<div class="row"><button type="button" class="btn small" data-act="zone-show">Show zone</button><button type="button" class="btn small ghost" data-act="unlock">Unlock stop</button></div>`}</div>`;
     return h + summaryHTML();
@@ -932,7 +1005,7 @@ PANES.zone = () => {
   h += `<p class="small muted">Nearest to ${S.me ? 'you' : 'the map centre'}:</p><div class="list">${near.map(([s, d]) => `<div class="li${S.ui.pick === s.id ? ' sel' : ''}"><span class="nm">${esc(s.n)}<small>${s.mode === 'tram' ? 'Tram' : 'Bus'} · ${fmtD(d)}</small></span><button type="button" class="btn small" data-act="pick-stop" data-id="${esc(s.id)}">Choose</button></div>`).join('')}</div>`;
   if (S.ui.pick) {
     const s = S.L.stops.find(x => x.id === S.ui.pick);
-    if (s) h += `<div class="card hot"><h3>${esc(s.n)}</h3><p class="note">Locking in is final for this round. The circle shows your zone.</p><button type="button" class="btn primary wide" data-act="lock-stop">Lock in this stop</button></div>`;
+    if (s) h += `<div class="card hot"><h3>${esc(s.n)}</h3><p class="note">Locking in is final for this round and applies to the whole hider team. The circle shows your zone.</p><button type="button" class="btn primary wide" data-act="lock-stop">Lock in this stop</button></div>`;
   }
   return h;
 };
@@ -946,10 +1019,11 @@ PANES.map = () => {
     <div class="field"><span>Places</span>${S.pack.cats.map(c => `<label class="check"><input type="checkbox" data-act="ly-cat" data-k="${c.id}" ${Ly.cats[c.id] ? 'checked' : ''}><span class="sw" style="border-color:${catColor(c.id)};background:${catColor(c.id)}"></span>${esc(c.label)} <span class="muted small">(${S.L.cats[c.id].items.filter(i => i.on).length})</span></label>`).join('')}</div>
     <div class="field"><span>Base map</span><div class="seg">${[['osm', 'Streets'], ['sketch', 'Offline sketch']].map(([v, l]) => `<button type="button" data-act="ly-base" data-v="${v}" class="${Ly.base === v ? 'on' : ''}">${l}</button>`).join('')}</div></div></div>`;
   const T = S.ui.tool;
+  const layersHTML = h; h = '';
   h += `<div class="grp"><h2>Tools</h2><p class="note">Only on this phone. Not shared.</p>
     <div class="row"><button type="button" class="btn small${T.mode === 'measure' ? ' primary' : ''}" data-act="tool" data-v="measure">Measure distance</button><button type="button" class="btn small${T.mode === 'circle' ? ' primary' : ''}" data-act="tool" data-v="circle">Draw circle</button><button type="button" class="btn small ghost" data-act="tool-clear">Clear</button></div>
     ${T.mode === 'circle' ? `<div class="chips">${[500, 1000, 2000, 5000].map(r => `<button type="button" class="chipbtn${T.r === r ? ' on' : ''}" data-act="tool-r" data-v="${r}">${r < 1000 ? r + ' m' : r / 1000 + ' km'}</button>`).join('')}</div>` : ''}</div>`;
-  return h;
+  return S.role === 'hider' ? h + layersHTML : layersHTML + h;
 };
 PANES.lists = () => {
   const U = S.ui.list, cid = U.cid;
@@ -1176,10 +1250,10 @@ function act(el) {
       { const q0 = (S.game.qs || {})[id]; if (q0) { const late = q0.late || qElapsed(Object.assign({ id }, q0)) > limitMs(q0); setTimeout(() => toast(late ? 'Answer sent late: no card draw.' : `Answer sent. ${cardText(q0.type)}.`, 5000), 50); } } const q = (S.game.qs || {})[id]; if (!q) return; const m = S.game.meta || {}; W.set('qs/' + id, Object.assign({}, q, { a: v, at: B.now(), apt: (m.pausedTotal || 0) + (m.pausedAt ? Math.max(0, now() - m.pausedAt) : 0), aby: S.name || 'Hider' })); break; }
     case 'gps-on': startGPS(); break;
     case 'pick-stop': S.ui.pick = id; map.closePopup(); S.ui.tab = 'zone'; const s = S.L.stops.find(x => x.id === id); if (s) map.flyTo([s.la, s.lo], 15, { duration: .5 }); drawHider(); render(); break;
-    case 'lock-stop': { const s = S.L.stops.find(x => x.id === S.ui.pick); if (!s) return; S.hider = { id: s.id, n: s.n, la: s.la, lo: s.lo, t: Date.now() }; LS.set(roundKey(), S.hider); S.ui.pick = null; lastInside = null; startGPS(); drawHider(); render(); toast('Stop locked in. Go hide!'); break; }
+    case 'lock-stop': { const s = S.L.stops.find(x => x.id === S.ui.pick); if (!s) return; saveZone({ id: s.id, n: s.n, la: s.la, lo: s.lo, t: Date.now(), by: S.name || 'Hider', uid: S.uid }); S.ui.pick = null; lastInside = null; startGPS(); drawHider(); render(); toast('Stop locked in. Go hide!'); break; }
     case 'zone-show': if (S.hider) map.flyTo([S.hider.la, S.hider.lo], 15, { duration: .5 }); break;
     case 'unlock': S.ui.confirm = 'unlock'; render(); break;
-    case 'unlock-yes': S.hider = null; LS.del(roundKey()); S.ui.confirm = null; drawHider(); render(); break;
+    case 'unlock-yes': saveZone(null); S.ui.confirm = null; drawHider(); render(); break;
     case 'ly': S.ui.layers[el.dataset.k] = el.checked; saveLayers(); if (el.dataset.k === 'zones') drawZones(); else renderMask(S.ui.tab === 'ask' ? S.previewMask : null); break;
     case 'ly-stops': S.ui.layers.stops = v; saveLayers(); drawStops(); render(); break;
     case 'ly-cat': S.ui.layers.cats[el.dataset.k] = el.checked; saveLayers(); drawCats(); break;
@@ -1196,7 +1270,7 @@ function act(el) {
     case 'ls-add-cancel': S.ui.list.adding = null; setMode(null); render(); break;
     case 'ls-add-save': { const ad = S.ui.list.adding, nm = ($('#ls-addname').value || '').trim(); if (!nm) { toast('Give the place a name.'); return; } listOverride(S.ui.list.cid, 'add/' + Date.now().toString(36), { n: nm, la: +ad.la.toFixed(6), lo: +ad.lo.toFixed(6) }); S.ui.list.adding = null; map.closePopup(); break; }
     case 'copy-link': { const t = $('#g-link').textContent; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Link copied.'), () => { const r = document.createRange(); r.selectNodeContents($('#g-link')); getSelection().removeAllRanges(); getSelection().addRange(r); toast('Select and copy the link.'); }); break; }
-    case 'role': if (started()) { toast('Roles are locked once the game starts.'); return; } if (S.role !== v) { S.role = v; LS.set('seek-role', v); S.ui.tab = null; S.preview = null; registerPlayer(); if (v === 'hider') { startGPS(); S.hider = LS.get(roundKey(), null); W.set('locs/' + S.uid, null); lastPush = null; } else { lastPush = null; pushLoc(); } drawDraft(); drawHider(); drawStops(); render(); renderMask(); } break;
+    case 'role': if (started()) { toast('Roles are locked once the game starts.'); return; } if (S.role !== v) { S.role = v; LS.set('seek-role', v); S.ui.tab = null; S.preview = null; Promise.resolve(registerPlayer()).then(() => syncZone(true)); if (v === 'hider') { startGPS(); S.hider = LS.get(roundKey(), null); W.set('locs/' + S.uid, null); lastPush = null; } else { S.hider = null; lastPush = null; pushLoc(); } drawDraft(); drawHider(); drawStops(); render(); renderMask(); } break;
     case 'g-safety': if (started()) return; W.set('meta/safety', el.checked); break;
     case 'start': S.ui.confirm = 'start'; render(); break;
     case 'start-yes': S.ui.confirm = null; W.set('meta/endedAt', null); W.set('meta/seekNotified', null); W.set('meta/startedAt', B.now());
@@ -1270,7 +1344,7 @@ function onGame(g) {
   const metaChanged = JSON.stringify(S.game.meta || {}) !== prevMeta;
   const qsChanged = JSON.stringify(S.game.qs || {}) !== prevQs;
   if (listsChanged) { buildLists(); FC.clear(); QC.clear(); drawCats(); }
-  if (S.role === 'hider' && S.game.meta?.round !== prevRound) { S.hider = LS.get(roundKey(), null); }
+  if (S.role === 'hider' && S.game.meta?.round !== prevRound && !S.firstSync) { S.hider = LS.get(roundKey(), null); syncZone(); }
   if (S.role === 'hider' && (S.game.locs || {})[S.uid]) W.set('locs/' + S.uid, null); // clean up pings from before switching role
   drawSeekers(); updateSeekerBtn();
   notify();
@@ -1294,7 +1368,7 @@ function notify() {
     S.seenQ.add(q.id); if (q.a) S.seenA.add(q.id);
   });
 }
-function registerPlayer() { if (S.code && S.uid) W.set('players/' + S.uid, { name: S.name || (S.role === 'hider' ? 'Hider' : 'Seeker'), role: S.role, seen: B.now(), ntfy: ntfyOn() ? myTopic() : null }); }
+function registerPlayer() { if (S.code && S.uid) return W.set('players/' + S.uid, { name: S.name || (S.role === 'hider' ? 'Hider' : 'Seeker'), role: S.role, seen: B.now(), ntfy: ntfyOn() ? myTopic() : null }); }
 
 /* ------------------------------------------------------------------ lobby & boot */
 const CODE_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -1326,7 +1400,7 @@ async function enter(mode, code, role, create, region) {
   $('#lobby').hidden = true; $('#sheet').hidden = false; $('#app').classList.remove('nosheet');
   history.replaceState(null, '', location.pathname + (mode === 'fb' ? '?g=' + code : ''));
   setTimeout(() => map.invalidateSize(), 50);
-  B.open(code, onGame); registerPlayer();
+  B.open(code, onGame); Promise.resolve(registerPlayer()).then(() => syncZone(true), () => syncZone(true));
   if (role === 'hider' || S.ui.shareLoc) startGPS();
   LS.get('seek-late:' + code, []).forEach(id => lateSeen.add(id));
   wake();
@@ -1346,7 +1420,7 @@ function lobby() {
   const go = (fn) => async () => { name(); document.querySelectorAll('.lobby button').forEach(b => b.disabled = true); try { await fn(); } catch (e) { lbMsg(e.message || String(e), true); } finally { document.querySelectorAll('.lobby button').forEach(b => b.disabled = false); } };
   $('#lb-create').addEventListener('click', go(() => enter('fb', newCode(), role, true, $('#lb-region').value)));
   $('#lb-join').addEventListener('click', go(() => { const c = $('#lb-code').value.trim().toUpperCase(); if (!/^[A-Z2-9]{5}$/.test(c)) throw new Error('Game codes have 5 letters or digits.'); return enter('fb', c, role, false); }));
-  $('#lb-local').addEventListener('click', go(async () => { const last = LS.get('seek-local-code', null) || newCode(); LS.set('seek-local-code', last); await LOCAL.init(); const ex = await LOCAL.exists(last); return enter('local', last, role, !ex, $('#lb-region').value); }));
+  $('#lb-local').addEventListener('click', go(async () => { await LOCAL.init(); const last = LOCAL.prepare(); const ex = await LOCAL.exists(last); return enter('local', last, role, !ex, $('#lb-region').value); }));
   // load the map behind the lobby so the page doesn't look empty
   loadPack($('#lb-region').value).catch(e => lbMsg(e.message, true));
   const last = LS.get('seek-last', null);

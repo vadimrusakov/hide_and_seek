@@ -7,6 +7,14 @@
         ".read": "auth != null && $code.matches(/^[A-Z2-9]{5}$/)",
         ".write": "auth != null && $code.matches(/^[A-Z2-9]{5}$/)"
       }
+    },
+    "secrets": {
+      "$code": {
+        "$round": {
+          ".read": "auth != null && $code.matches(/^[A-Z2-9]{5}$/) && root.child('games').child($code).child('players').child(auth.uid).child('role').val() === 'hider'",
+          ".write": "auth != null && $code.matches(/^[A-Z2-9]{5}$/) && root.child('games').child($code).child('players').child(auth.uid).child('role').val() === 'hider'"
+        }
+      }
     }
   }
 }
