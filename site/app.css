@@ -225,3 +225,5 @@ button.oc{background:none;text-align:left;cursor:pointer;color:inherit;font:inhe
 button.oc.sel{box-shadow:0 0 0 2px currentColor inset}
 .oc.yes.sel{background:color-mix(in srgb,var(--yes) 14%,transparent)}
 .oc.no.sel{background:color-mix(in srgb,var(--no) 14%,transparent)}
+
+.lb-version{margin:0;font-size:11.5px;color:var(--muted);text-align:right}

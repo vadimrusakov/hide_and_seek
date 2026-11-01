@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-11-01.1';
+const APP_VERSION = '2026-11-01.2';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -1448,6 +1448,7 @@ async function enter(mode, code, role, create, region) {
 }
 function lobby() {
   $('#app').classList.add('nosheet');
+  const vf = $('#lb-version'); if (vf) vf.textContent = 'Version ' + APP_VERSION;
   $('#lb-name').value = S.name;
   $('#lb-region').innerHTML = CFG.regions.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
   let role = LS.get('seek-role', 'seeker');
