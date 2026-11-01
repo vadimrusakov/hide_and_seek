@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-11-01.3';
+const APP_VERSION = '2026-11-01.4';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -240,6 +240,9 @@ function buildLists() {
 }
 function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); }
 const activeStops = () => S.L.stops.filter(s => s.on && s.k >= 0);
+// stops the seekers switched off from card info (e.g. a curse); shared between seekers, ignored on hider phones
+const sxAll = () => S.game.sx || {};
+const sxOff = id => S.role === 'seeker' && !!sxAll()[id];
 
 /* ------------------------------------------------------------------ category distance fields */
 const FC = new Map();
@@ -445,6 +448,7 @@ let STATE = null;
 function evaluate() {
   const stops = activeStops(), base = baseMask();
   let ok = stopsTouching(base, stops);
+  if (S.role === 'seeker') stops.forEach((s, i) => { if (sxAll()[s.id]) ok[i] = 0; });
   const still = Uint8Array.from(base);
   const qs = answeredQs();
   qs.forEach(q => { const e = qEval(q, stops, base); for (let i = 0; i < ok.length; i++) ok[i] &= e.ok[i]; for (let k = 0; k < G.N; k++) still[k] &= e.c[k]; });
@@ -571,10 +575,13 @@ function drawStops() {
   const okSet = new Set(); if (STATE) STATE.stops.forEach((s, i) => STATE.ok[i] && okSet.add(s.id));
   S.L.stops.forEach(s => {
     const possible = okSet.has(s.id);
-    if (mode === 'possible' && STATE && !possible && S.role !== 'hider') return;
-    const m = L.circleMarker([s.la, s.lo], { renderer: Rr, radius: rad, weight: 1, color: '#fff', fillOpacity: s.on ? 1 : .3,
+    const x = s.on && sxOff(s.id);
+    if (mode === 'possible' && STATE && !possible && S.role !== 'hider' && !x) return;
+    const m = L.circleMarker([s.la, s.lo], x ? { renderer: Rr, radius: rad, weight: 1.6, color: css('--ink'), fillOpacity: .15, fillColor: css('--muted') }
+      : { renderer: Rr, radius: rad, weight: 1, color: '#fff', fillOpacity: s.on ? 1 : .3,
       fillColor: !s.on ? css('--muted') : possible ? (s.mode === 'tram' ? css('--busy') : css('--madder')) : css('--muted') });
     m.bindPopup(() => stopPopup(s)); m.on('popupopen', () => showZone(s.la, s.lo)); m.on('popupclose', clearZone); m.addTo(layers.stops);
+    if (S.ui.reopen === s.id) { S.ui.reopen = null; setTimeout(() => m.openPopup(), 0); }
   });
   layers.stops.addTo(map);
 }
@@ -585,8 +592,10 @@ function showZone(la, lo) {
 const clearZone = () => layers.focus && layers.focus.clearLayers();
 function stopPopup(s) {
   const pos = STATE ? STATE.stops.findIndex(x => x.id === s.id) : -1;
-  const st = !s.on ? 'switched off' : pos >= 0 && STATE.ok[pos] ? 'still possible' : 'ruled out';
+  const x = s.on && sxOff(s.id), xi = x ? sxAll()[s.id] : null;
+  const st = !s.on ? 'switched off in the stop list' : x ? 'switched off by ' + esc(xi.by || 'a seeker') : pos >= 0 && STATE.ok[pos] ? 'still possible' : 'ruled out';
   let h = `<b>${esc(s.n)}</b><br><span class="muted">${s.mode === 'tram' ? 'Tram stop' : 'Bus stop'} · ${st}</span><br><span class="small">Dashed circle: ${fmtD(R())} hiding zone</span>`;
+  if (S.role === 'seeker' && s.on) h += `<label class="check pop-sw"><input type="checkbox" class="toggle" data-act="sx" data-id="${esc(s.id)}" ${x ? '' : 'checked'}> Possible hiding stop</label><span class="small muted">Seekers only. Hiders still see every stop.</span>`;
   if (S.role === 'hider' && !S.hider) h += `<br><button class="btn small primary" style="margin-top:6px" data-act="pick-stop" data-id="${esc(s.id)}">Choose this stop</button>`;
   return h;
 }
@@ -1067,7 +1076,18 @@ PANES.map = () => {
   const layersHTML = h; h = '';
   h += `<div class="grp"><h2>Tools</h2><p class="note">Only on this phone. Not shared.</p>
     <div class="row"><button type="button" class="btn small${T.mode === 'measure' ? ' primary' : ''}" data-act="tool" data-v="measure">Measure distance</button><button type="button" class="btn small${T.mode === 'circle' ? ' primary' : ''}" data-act="tool" data-v="circle">Draw circle</button><button type="button" class="btn small ghost" data-act="tool-clear">Clear</button></div>
-    ${T.mode === 'circle' ? `<div class="chips">${[500, 1000, 2000, 5000].map(r => `<button type="button" class="chipbtn${T.r === r ? ' on' : ''}" data-act="tool-r" data-v="${r}">${r < 1000 ? r + ' m' : r / 1000 + ' km'}</button>`).join('')}</div>` : ''}</div>`;
+    ${T.mode === 'circle' ? `<div class="chips">${[500, 1000, 2000, 5000].map(r => `<button type="button" class="chipbtn${T.r === r ? ' on' : ''}" data-act="tool-r" data-v="${r}">${r < 1000 ? r + ' m' : r / 1000 + ' km'}</button>`).join('')}</div>
+    <div class="row"><label class="field grow tool-rc"><span>Custom radius (m)</span><input id="tool-rc" type="number" inputmode="numeric" min="10" max="50000" step="10" value="${T.r}"></label><button type="button" class="btn small" data-act="tool-me">Circle at my location</button></div>
+    <p class="note">Tap the map to place a ${fmtD(T.r)} circle.</p>` : ''}
+    ${T.last && S.role === 'seeker' ? (() => { const n = stopsIn(T.last).filter(s => !sxAll()[s.id]).length; return `<div class="card"><div class="small">Last circle: ${fmtD(T.last.r)} · ${stopsIn(T.last).length} stops inside</div>
+      <div class="row"><button type="button" class="btn small" data-act="sx-circle" ${n ? '' : 'disabled'}>Switch off ${n} stop${n === 1 ? '' : 's'} inside</button></div></div>`; })() : ''}</div>`;
+  if (S.role === 'seeker') {
+    const xs = S.L.stops.filter(s => s.on && sxAll()[s.id]);
+    h += `<div class="grp"><h2>Stops switched off by seekers</h2><p class="note">For cards that rule out stops. Tap a stop on the map to switch it off or on. Shared with the other seekers; hiders' maps still use every stop.</p>
+      ${xs.length ? `<div class="row"><span class="grow small muted">${xs.length} stop${xs.length === 1 ? '' : 's'} off</span><button type="button" class="btn small" data-act="sx-all-on">Switch all back on</button></div>
+      <div class="sx-list">${xs.slice(0, 60).map(s => `<div class="row"><button type="button" class="linkbtn grow" data-act="sx-show" data-id="${esc(s.id)}">${esc(s.n)}</button><span class="small muted">${esc(sxAll()[s.id].by || '')}</span><button type="button" class="btn small ghost" data-act="sx-on" data-id="${esc(s.id)}">On</button></div>`).join('')}${xs.length > 60 ? `<p class="small muted">…and ${xs.length - 60} more</p>` : ''}</div>`
+      : '<p class="small muted">None switched off.</p>'}</div>`;
+  }
   return h + layersHTML;
 };
 PANES.lists = () => {
@@ -1256,7 +1276,18 @@ function onMapClick(e) {
       L.circleMarker(ll, { radius: 5, color: css('--ink'), fillColor: css('--paper'), fillOpacity: 1, weight: 2 }).addTo(layers.tools); T.a = null; hint(`Distance: ${fmtD(d)}. Tap to measure again.`, true); }
     return;
   }
-  if (T.mode === 'circle') { L.circle(ll, { radius: T.r, color: css('--ink'), weight: 2, fill: false, dashArray: '6 5' }).addTo(layers.tools); L.circleMarker(ll, { radius: 3, color: css('--ink'), fillOpacity: 1 }).addTo(layers.tools); return; }
+  if (T.mode === 'circle') { drawToolCircle(ll); return; }
+}
+function drawToolCircle(ll) {
+  const T = S.ui.tool;
+  L.circle(ll, { radius: T.r, color: css('--ink'), weight: 2, fill: false, dashArray: '6 5', interactive: false }).addTo(layers.tools);
+  L.circleMarker(ll, { radius: 3, color: css('--ink'), fillOpacity: 1, interactive: false }).addTo(layers.tools);
+  T.last = { la: ll[0], lo: ll[1], r: T.r }; render();
+}
+const stopsIn = c => activeStops().filter(s => dm(s.la, s.lo, c.la, c.lo) <= c.r);
+function setSx(ids, off) {
+  const by = S.name || 'Seeker', t = Date.now();
+  ids.forEach(id => W.set('sx/' + id, off ? { by, t } : null));
 }
 function act(el) {
   const a = el.dataset.act, id = el.dataset.id, v = el.dataset.v;
@@ -1311,7 +1342,13 @@ function act(el) {
     case 'ly-base': S.ui.layers.base = v; saveLayers(); setBase(); render(); break;
     case 'tool': S.ui.tool.mode = S.ui.tool.mode === v ? null : v; S.ui.tool.a = null; setMode(null); if (S.ui.tool.mode) hint(v === 'measure' ? 'Tap the first point.' : 'Tap to place a circle.', true); render(); break;
     case 'tool-r': S.ui.tool.r = +v; render(); break;
-    case 'tool-clear': layers.tools.clearLayers(); S.ui.tool.a = null; break;
+    case 'tool-clear': layers.tools.clearLayers(); S.ui.tool.a = null; S.ui.tool.last = null; render(); break;
+    case 'tool-me': startGPS(); if (S.me) { drawToolCircle([S.me.la, S.me.lo]); map.fitBounds(L.latLng(S.me.la, S.me.lo).toBounds(S.ui.tool.r * 2.2)); } else toast('Waiting for your location… try again in a moment.'); break;
+    case 'sx': S.ui.reopen = id; setSx([id], !el.checked); break;
+    case 'sx-on': setSx([id], false); break;
+    case 'sx-all-on': setSx(Object.keys(sxAll()), false); break;
+    case 'sx-circle': { const ids = stopsIn(S.ui.tool.last).filter(s => !sxAll()[s.id]).map(s => s.id); setSx(ids, true); toast(`${ids.length} stop${ids.length === 1 ? '' : 's'} switched off for seekers.`); break; }
+    case 'sx-show': { const s = S.L.stops.find(x => x.id === id); if (s) { S.ui.reopen = id; if (S.ui.layers.stops === 'off') { S.ui.layers.stops = 'possible'; saveLayers(); } map.flyTo([s.la, s.lo], 15, { duration: .5 }); setTimeout(drawStops, 600); } break; }
     case 'ls-on': listOverride(S.ui.list.cid, 'off/' + id, el.checked ? null : true); break;
     case 'ls-show': { const it = findItem(id); if (it) { map.flyTo([it.la, it.lo], 16, { duration: .5 }); L.popup().setLatLng([it.la, it.lo]).setContent(`<b>${esc(it.n)}</b>`).openOn(map); } break; }
     case 'ls-ren': S.ui.list.edit = id; render(); setTimeout(() => $('#ls-ren') && $('#ls-ren').focus(), 30); break;
@@ -1321,7 +1358,7 @@ function act(el) {
     case 'ls-add-cancel': S.ui.list.adding = null; setMode(null); render(); break;
     case 'ls-add-save': { const ad = S.ui.list.adding, nm = ($('#ls-addname').value || '').trim(); if (!nm) { toast('Give the place a name.'); return; } listOverride(S.ui.list.cid, 'add/' + Date.now().toString(36), { n: nm, la: +ad.la.toFixed(6), lo: +ad.lo.toFixed(6) }); S.ui.list.adding = null; map.closePopup(); break; }
     case 'copy-link': { const t = $('#g-link').textContent; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Link copied.'), () => { const r = document.createRange(); r.selectNodeContents($('#g-link')); getSelection().removeAllRanges(); getSelection().addRange(r); toast('Select and copy the link.'); }); break; }
-    case 'role': if (started()) { toast('Roles are locked once the game starts.'); return; } if (S.role !== v) { S.role = v; LS.set('seek-role', v); S.ui.tab = null; S.preview = null; Promise.resolve(registerPlayer()).then(() => syncZone(true)); if (v === 'hider') { startGPS(); S.hider = LS.get(roundKey(), null); W.set('locs/' + S.uid, null); lastPush = null; } else { S.hider = null; lastPush = null; pushLoc(); } drawDraft(); drawHider(); drawStops(); render(); renderMask(); } break;
+    case 'role': if (started()) { toast('Roles are locked once the game starts.'); return; } if (S.role !== v) { S.role = v; LS.set('seek-role', v); S.ui.tab = null; S.preview = null; Promise.resolve(registerPlayer()).then(() => syncZone(true)); if (v === 'hider') { startGPS(); S.hider = LS.get(roundKey(), null); W.set('locs/' + S.uid, null); lastPush = null; } else { S.hider = null; lastPush = null; pushLoc(); } evaluate(); drawDraft(); drawHider(); drawStops(); render(); renderMask(); } break;
     case 'g-safety': if (started()) return; W.set('meta/safety', el.checked); break;
     case 'start': S.ui.confirm = 'start'; render(); break;
     case 'start-yes': S.ui.confirm = null; W.set('meta/endedAt', null); W.set('meta/seekNotified', null); W.set('meta/startedAt', B.now());
@@ -1340,7 +1377,7 @@ function act(el) {
     case 'test-alert': alertUser('Test alert', 'This is how questions and answers will arrive.', 'test'); break;
     case 'end-yes': { S.ui.confirm = null; ntfyTo('all', 'Game over', 'The seekers ended the game.', 4, ['trophy']); const m = S.game.meta || {}; if (m.pausedAt) { W.set('meta/pausedTotal', (m.pausedTotal || 0) + Math.max(0, now() - m.pausedAt)); W.set('meta/pausedAt', null); } W.set('meta/endedAt', B.now()); break; }
     case 'newround': S.ui.confirm = 'newround'; render(); break;
-    case 'newround-yes': S.ui.confirm = null; W.set('meta/round', (S.game.meta?.round || 0) + 1); W.set('meta/pausedTotal', 0); W.set('meta/pausedAt', null); W.set('qs', null); W.set('locs', null); W.set('meta/startedAt', null); W.set('meta/endedAt', null); S.hider = null; drawHider(); break;
+    case 'newround-yes': S.ui.confirm = null; W.set('meta/round', (S.game.meta?.round || 0) + 1); W.set('meta/pausedTotal', 0); W.set('meta/pausedAt', null); W.set('qs', null); W.set('locs', null); W.set('sx', null); W.set('meta/startedAt', null); W.set('meta/endedAt', null); S.hider = null; drawHider(); break;
     case 'share-loc': S.ui.shareLoc = el.checked; LS.set('seek-share', el.checked); if (el.checked) startGPS(); else W.set('locs/' + S.uid, null); break;
     case 'leave': S.ui.confirm = 'leave'; render(); break;
     case 'leave-yes': W.set('locs/' + S.uid, null); LS.del('seek-last'); location.href = location.pathname; break;
@@ -1371,6 +1408,7 @@ document.addEventListener('change', e => {
   if (t.id === 'ask-subj') { A_subj(t.value); }
   if (t.id === 'ask-cat') { S.ui.ask.cat = t.value; S.preview = null; drawDraft(); render(); runPreview(); }
   if (t.id === 'ask-rc') { const v = parseFloat(t.value); if (v > 0) { S.ui.ask.r = Math.round(v * 1000); S.preview = null; drawDraft(); render(); runPreview(); } }
+  if (t.id === 'tool-rc') { const v = Math.round(+t.value); if (v >= 10 && v <= 50000) { S.ui.tool.r = v; render(); } else toast('Use a radius between 10 m and 50 km.'); return; }
   if (t.id === 'ls-cid') { S.ui.list.cid = t.value; S.ui.list.q = ''; S.ui.list.edit = null; S.ui.list.adding = null; render(); }
   if (t.id === 'g-name') { const v = t.value.trim().slice(0, 24); if (!v) { t.value = S.name; toast('Your name can’t be empty.'); return; } S.name = v; LS.set('seek-name', S.name); registerPlayer(); }
   if (t.id === 'g-ans' || t.id === 'g-photo') { const v = Math.round(+t.value); if (!started() && v >= 1 && v <= 60) W.set('meta/' + (t.id === 'g-ans' ? 'ansMin' : 'photoMin'), v); }
@@ -1387,13 +1425,13 @@ document.addEventListener('keydown', e => {
 
 /* ------------------------------------------------------------------ game sync */
 function onGame(g) {
-  const prevLists = JSON.stringify(S.game.lists || {}), prevMeta = JSON.stringify(S.game.meta || {}), prevQs = JSON.stringify(S.game.qs || {}), prevPl = JSON.stringify(S.game.players || {});
+  const prevLists = JSON.stringify(S.game.lists || {}), prevMeta = JSON.stringify(S.game.meta || {}), prevQs = JSON.stringify(S.game.qs || {}) + JSON.stringify(S.game.sx || {}), prevPl = JSON.stringify(S.game.players || {});
   const prevRound = S.game.meta?.round;
   S.game = g || {};
   if (!S.game.meta && !S.firstSync) { toast('This game no longer exists.'); }
   const listsChanged = JSON.stringify(S.game.lists || {}) !== prevLists || !S.L;
   const metaChanged = JSON.stringify(S.game.meta || {}) !== prevMeta;
-  const qsChanged = JSON.stringify(S.game.qs || {}) !== prevQs;
+  const qsChanged = JSON.stringify(S.game.qs || {}) + JSON.stringify(S.game.sx || {}) !== prevQs;
   if (listsChanged) { buildLists(); FC.clear(); QC.clear(); drawCats(); }
   if (S.role === 'hider' && S.game.meta?.round !== prevRound && !S.firstSync) { S.hider = LS.get(roundKey(), null); syncZone(); }
   if (S.role === 'hider' && (S.game.locs || {})[S.uid]) W.set('locs/' + S.uid, null); // clean up pings from before switching role
