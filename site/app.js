@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-11-01.2';
+const APP_VERSION = '2026-11-01.3';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -622,9 +622,16 @@ function renderMask(prev) {
   // one-answer view: tint = still possible; pale tinted grey = possible only if the hider has moved; dark = ruled out
   const one = prev && !prev.both, P = prev && prev.both, oc = one ? (prev.i ? Nn : Y) : null;
   const PM = one && show ? new Uint8Array(G.N) : null; // preview cells possible only if the hider moved: drawn as grey stripes
+  // both-answers view: green/purple tint where possible without moving, green/purple stripes (crossing) where possible only if moved
+  const B = P && show && prev.b, M0 = B ? new Uint8Array(G.N) : null, M1 = B ? new Uint8Array(G.N) : null;
   for (let k = 0, j = 0; k < G.N; k++, j += 4) {
     let px = null;
     if (one) { if (!prev.u[k]) px = out; else if (PM && !prev.st[k]) PM[k] = 1; else px = oc; }
+    else if (B) {
+      const a = B[0], b = B[1];
+      if (!a.u[k] && !b.u[k]) px = out;
+      else { if (a.st[k]) px = Y; else if (b.st[k]) px = Nn; if (a.u[k] && !a.st[k]) M0[k] = 1; if (b.u[k] && !b.st[k]) M1[k] = 1; }
+    }
     else if (!U[k]) px = out;
     else if (P) px = show && !St[k] ? (P[k] ? Ys : Ns) : (P[k] ? Y : Nn);
     else if (show && !St[k]) px = soft;
@@ -632,32 +639,37 @@ function renderMask(prev) {
   }
   c.putImageData(img, 0, 0);
   const url = cv.toDataURL();
-  drawStripes(PM, dark);
+  const grey = dark ? 'rgba(200,205,215,.55)' : 'rgba(40,42,48,.42)';
+  drawStripes(PM ? [{ m: PM, col: grey, ang: 45 }]
+    : B ? [{ m: M0, col: dark ? 'rgba(76,201,133,.8)' : 'rgba(31,138,76,.72)', ang: 45 }, { m: M1, col: dark ? 'rgba(197,138,224,.8)' : 'rgba(139,63,168,.72)', ang: -45 }] : null);
   if (!maskOverlay) maskOverlay = L.imageOverlay(url, G.bounds, { pane: 'maskPane', interactive: false }).addTo(map);
   else maskOverlay.setUrl(url);
 }
 
 let stripeLayer = null, stripeFit = null;
-// Screen-space diagonal stripes (about 9 px apart at any zoom), masked to the given grid cells.
-function drawStripes(PM, dark) {
+// Screen-space diagonal stripes (about 9 px apart at any zoom), each layer masked to its grid cells: [{ m: Uint8Array, col, ang }]
+function drawStripes(layers) {
   if (stripeLayer) { map.removeLayer(stripeLayer); stripeLayer = null; }
   if (stripeFit) { map.off('zoomend', stripeFit); stripeFit = null; }
-  if (!PM) return;
-  const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
-  const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
-  for (let k = 0, j = 0; k < G.N; k++, j += 4) if (PM[k]) { d[j] = d[j + 1] = d[j + 2] = d[j + 3] = 255; }
-  c.putImageData(img, 0, 0);
-  const col = dark ? 'rgba(200,205,215,.55)' : 'rgba(40,42,48,.42)';
+  if (!layers || !layers.length) return;
   const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${G.nx} ${G.ny}`); svg.setAttribute('preserveAspectRatio', 'none');
-  svg.innerHTML = `<defs><pattern id="seek-stp" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)"><rect width="1.6" height="4" fill="${col}"/></pattern>
-    <mask id="seek-stm" maskUnits="userSpaceOnUse" x="0" y="0" width="${G.nx}" height="${G.ny}"><image href="${cv.toDataURL()}" x="0" y="0" width="${G.nx}" height="${G.ny}" preserveAspectRatio="none"/></mask></defs>
-    <rect width="${G.nx}" height="${G.ny}" fill="url(#seek-stp)" mask="url(#seek-stm)"/>`;
+  let defs = '', body = '';
+  layers.forEach((L_, n) => {
+    const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
+    const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
+    for (let k = 0, j = 0; k < G.N; k++, j += 4) if (L_.m[k]) { d[j] = d[j + 1] = d[j + 2] = d[j + 3] = 255; }
+    c.putImageData(img, 0, 0);
+    defs += `<pattern id="seek-stp${n}" class="seek-stp" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(${L_.ang})"><rect width="1.6" height="4" fill="${L_.col}"/></pattern>
+      <mask id="seek-stm${n}" maskUnits="userSpaceOnUse" x="0" y="0" width="${G.nx}" height="${G.ny}"><image href="${cv.toDataURL()}" x="0" y="0" width="${G.nx}" height="${G.ny}" preserveAspectRatio="none"/></mask>`;
+    body += `<rect width="${G.nx}" height="${G.ny}" fill="url(#seek-stp${n})" mask="url(#seek-stm${n})"/>`;
+  });
+  svg.innerHTML = `<defs>${defs}</defs>${body}`;
   stripeLayer = L.svgOverlay(svg, G.bounds, { pane: 'maskPane', interactive: false }).addTo(map);
   stripeFit = () => {
     const p1 = map.latLngToLayerPoint(G.bounds[0]), p2 = map.latLngToLayerPoint(G.bounds[1]);
-    const w = Math.max(0.5, 9 / (Math.abs(p2.x - p1.x) / G.nx)), pt = svg.querySelector('#seek-stp');
-    pt.setAttribute('width', w); pt.setAttribute('height', w); pt.firstElementChild.setAttribute('width', w * 0.4); pt.firstElementChild.setAttribute('height', w);
+    const w = Math.max(0.5, 9 / (Math.abs(p2.x - p1.x) / G.nx));
+    svg.querySelectorAll('.seek-stp').forEach(pt => { pt.setAttribute('width', w); pt.setAttribute('height', w); pt.firstElementChild.setAttribute('width', w * 0.4); pt.firstElementChild.setAttribute('height', w); });
   };
   stripeFit(); map.on('zoomend', stripeFit);
 }
@@ -964,7 +976,7 @@ PANES.ask = () => {
       const vi = S.ui.pv ?? -1;
       h += `<div class="field"><span>Preview on the map</span><div class="seg">${[[-1, 'Both']].concat(A.map((ans, i) => [i, 'If ' + QT[t].names[ans].toLowerCase()])).map(([v, l]) => `<button type="button" data-act="pv" data-v="${v}" class="${vi === v ? 'on' : ''}" aria-pressed="${vi === v}">${l}</button>`).join('')}</div></div>
       <div class="outcome">${A.map((ans, i) => `<button type="button" class="oc ${i ? 'no' : 'yes'}${vi === i ? ' sel' : ''}" data-act="pv" data-v="${i}"><b>If ${QT[t].names[ans]}</b><div class="mono">${nf(pv[ans].n)} stops</div><div class="mono">${fmtA(pv[ans].area)}</div>${pv[ans].stillArea < pv[ans].area - 1 ? `<div class="small muted">${fmtA(pv[ans].stillArea)} if not moved</div>` : ''}</button>`).join('')}</div>
-        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Choose “If ${QT[t].names[A[0]].toLowerCase()}” or “If ${QT[t].names[A[1]].toLowerCase()}” to also see, as stripes, the areas where the hider could be only if they moved.`
+        <p class="note">${vi < 0 ? `Map: <b>green</b> = hider could be here if “${QT[t].names[A[0]]}”, <b>purple</b> if “${QT[t].names[A[1]]}”. Stripes in the same colour = only if they moved within their zone (crossed stripes = either answer). <b>Dark grey</b> = ruled out either way.${S.ui.layers.still ? '' : ' (Stripes are off: turn on the lighter shading in Map → Layers.)'}`
           : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>grey stripes</b> = only if they moved within their zone, <b>dark grey</b> = ruled out.${S.ui.layers.still ? '' : ' (Stripes are off: turn on the lighter shading in Map → Layers.)'}`}</p>`;
     } else h += `<p class="note">Working out both outcomes…</p>`;
     const ph = phase();
@@ -1180,7 +1192,7 @@ const previewKey = q => JSON.stringify(q) + S.sig + R() + (STATE ? STATE.n : '')
 function previewView() { // 'both' (-1) or the map exactly as it would look after answer 0 / 1
   if (!S.preview) return null;
   const A = QT[S.preview.type].ans, i = S.ui.pv ?? -1, r = S.preview.r;
-  return i < 0 ? { both: r[A[0]].c } : { i, u: r[A[i]].u, st: r[A[i]].st };
+  return i < 0 ? { both: r[A[0]].c, b: A.map(a => ({ u: r[a].u, st: r[a].st })) } : { i, u: r[A[i]].u, st: r[A[i]].st };
 }
 const runPreview = debounce(() => {
   const q = draftQ();
