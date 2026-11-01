@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const CFG = window.SEEK_CONFIG;
-const APP_VERSION = '2026-10-31.4';
+const APP_VERSION = '2026-11-01.1';
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const applyTheme = t => {
@@ -610,7 +610,7 @@ function drawQs() {
 }
 function renderMask(prev) {
   if (prev === undefined) prev = S.role === 'seeker' && S.ui.tab === 'ask' ? S.previewMask : null;
-  if (!STATE || !S.ui.layers.mask) { if (maskOverlay) { map.removeLayer(maskOverlay); maskOverlay = null; } return; }
+  if (!STATE || !S.ui.layers.mask) { if (maskOverlay) { map.removeLayer(maskOverlay); maskOverlay = null; } drawStripes(null); return; }
   const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
   const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
   const dark = isDark(), U = STATE.union, St = STATE.still, show = S.ui.layers.still;
@@ -621,10 +621,10 @@ function renderMask(prev) {
   const greyOn = dark ? [0, 0, 0, 120] : [30, 32, 38, 90], Ys = over(greyOn, Y), Ns = over(greyOn, Nn);
   // one-answer view: tint = still possible; pale tinted grey = possible only if the hider has moved; dark = ruled out
   const one = prev && !prev.both, P = prev && prev.both, oc = one ? (prev.i ? Nn : Y) : null;
-  const paleOne = soft; // same light grey as the normal map: possible only if the hider moved
+  const PM = one && show ? new Uint8Array(G.N) : null; // preview cells possible only if the hider moved: drawn as grey stripes
   for (let k = 0, j = 0; k < G.N; k++, j += 4) {
     let px = null;
-    if (one) { if (!prev.u[k]) px = out; else if (show && !prev.st[k]) px = paleOne; else px = oc; }
+    if (one) { if (!prev.u[k]) px = out; else if (PM && !prev.st[k]) PM[k] = 1; else px = oc; }
     else if (!U[k]) px = out;
     else if (P) px = show && !St[k] ? (P[k] ? Ys : Ns) : (P[k] ? Y : Nn);
     else if (show && !St[k]) px = soft;
@@ -632,10 +632,35 @@ function renderMask(prev) {
   }
   c.putImageData(img, 0, 0);
   const url = cv.toDataURL();
+  drawStripes(PM, dark);
   if (!maskOverlay) maskOverlay = L.imageOverlay(url, G.bounds, { pane: 'maskPane', interactive: false }).addTo(map);
   else maskOverlay.setUrl(url);
 }
 
+let stripeLayer = null, stripeFit = null;
+// Screen-space diagonal stripes (about 9 px apart at any zoom), masked to the given grid cells.
+function drawStripes(PM, dark) {
+  if (stripeLayer) { map.removeLayer(stripeLayer); stripeLayer = null; }
+  if (stripeFit) { map.off('zoomend', stripeFit); stripeFit = null; }
+  if (!PM) return;
+  const cv = document.createElement('canvas'); cv.width = G.nx; cv.height = G.ny;
+  const c = cv.getContext('2d'), img = c.createImageData(G.nx, G.ny), d = img.data;
+  for (let k = 0, j = 0; k < G.N; k++, j += 4) if (PM[k]) { d[j] = d[j + 1] = d[j + 2] = d[j + 3] = 255; }
+  c.putImageData(img, 0, 0);
+  const col = dark ? 'rgba(200,205,215,.55)' : 'rgba(40,42,48,.42)';
+  const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${G.nx} ${G.ny}`); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.innerHTML = `<defs><pattern id="seek-stp" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)"><rect width="1.6" height="4" fill="${col}"/></pattern>
+    <mask id="seek-stm" maskUnits="userSpaceOnUse" x="0" y="0" width="${G.nx}" height="${G.ny}"><image href="${cv.toDataURL()}" x="0" y="0" width="${G.nx}" height="${G.ny}" preserveAspectRatio="none"/></mask></defs>
+    <rect width="${G.nx}" height="${G.ny}" fill="url(#seek-stp)" mask="url(#seek-stm)"/>`;
+  stripeLayer = L.svgOverlay(svg, G.bounds, { pane: 'maskPane', interactive: false }).addTo(map);
+  stripeFit = () => {
+    const p1 = map.latLngToLayerPoint(G.bounds[0]), p2 = map.latLngToLayerPoint(G.bounds[1]);
+    const w = Math.max(0.5, 9 / (Math.abs(p2.x - p1.x) / G.nx)), pt = svg.querySelector('#seek-stp');
+    pt.setAttribute('width', w); pt.setAttribute('height', w); pt.firstElementChild.setAttribute('width', w * 0.4); pt.firstElementChild.setAttribute('height', w);
+  };
+  stripeFit(); map.on('zoomend', stripeFit);
+}
 /* ------------------------------------------------------------------ GPS */
 let watchId = null;
 function startGPS() {
@@ -939,8 +964,8 @@ PANES.ask = () => {
       const vi = S.ui.pv ?? -1;
       h += `<div class="field"><span>Preview on the map</span><div class="seg">${[[-1, 'Both']].concat(A.map((ans, i) => [i, 'If ' + QT[t].names[ans].toLowerCase()])).map(([v, l]) => `<button type="button" data-act="pv" data-v="${v}" class="${vi === v ? 'on' : ''}" aria-pressed="${vi === v}">${l}</button>`).join('')}</div></div>
       <div class="outcome">${A.map((ans, i) => `<button type="button" class="oc ${i ? 'no' : 'yes'}${vi === i ? ' sel' : ''}" data-act="pv" data-v="${i}"><b>If ${QT[t].names[ans]}</b><div class="mono">${nf(pv[ans].n)} stops</div><div class="mono">${fmtA(pv[ans].area)}</div>${pv[ans].stillArea < pv[ans].area - 1 ? `<div class="small muted">${fmtA(pv[ans].stillArea)} if not moved</div>` : ''}</button>`).join('')}</div>
-        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Choose “If ${QT[t].names[A[0]].toLowerCase()}” or “If ${QT[t].names[A[1]].toLowerCase()}” to also see the light-grey areas, where the hider could be only if they moved.`
-          : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>light grey</b> = only if they moved within their zone, <b>dark grey</b> = ruled out.${S.ui.layers.still ? '' : ' (Light grey is off in Map → Layers.)'}`}</p>`;
+        <p class="note">${vi < 0 ? `Map: green is where the hider could be if the answer is ${QT[t].names[A[0]].toLowerCase()}, purple if ${QT[t].names[A[1]].toLowerCase()}. Choose “If ${QT[t].names[A[0]].toLowerCase()}” or “If ${QT[t].names[A[1]].toLowerCase()}” to also see, as stripes, the areas where the hider could be only if they moved.`
+          : `Map after “${QT[t].names[A[vi]]}”: <b>${vi ? 'purple' : 'green'}</b> = hider could be here, <b>grey stripes</b> = only if they moved within their zone, <b>dark grey</b> = ruled out.${S.ui.layers.still ? '' : ' (Stripes are off: turn on the lighter shading in Map → Layers.)'}`}</p>`;
     } else h += `<p class="note">Working out both outcomes…</p>`;
     const ph = phase();
     h += ph === 'seeking' && !paused() ? `<button type="button" class="btn primary wide" data-act="ask-send">Send question</button></div>`
